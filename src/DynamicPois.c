@@ -59,211 +59,119 @@ char * DynamicPois = "$Id: CreateAuthor.c,v 1.1 2018/04/27 16:21:03 peter Exp $"
 
 #endif
 
-static int tcp_read(int socket, char * buffer, int bufferSize, struct timeval * timeout)
+static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * timeout)
 {
 	char * tag = "tcp_read";
-	int     rc = 0;                     /* return code of select              */
-	fd_set  fdvar;                      /* bit array for select call          */
-	int     socketerror = 0;
-	int     optlen = sizeof(int);
-	int     bytesread = 0;
+	int    rc = 0;
+	int    socketError = 0;
+	int    optlen = sizeof(int);
+	int    nBytesRead = 0;
 
-	/*
-	* the socket must not be negative
-	*/
-	if (socket < 0)
+	errno = 0;
+	optlen = sizeof(socketError);
+	if (getsockopt(socket, SOL_SOCKET, SO_ERROR, (char *)&socketError, &optlen))
 	{
-		pblCgiExitOnError("%s: Negative socket not allowed!\n", tag);
+		pblCgiExitOnError("%s: getsockopt %d error, errno %d\n", tag, socket, errno);
 	}
 
-	/*
-	* we clear any error condition on the socket first
-	*/
-	optlen = sizeof(socketerror);
-	getsockopt(socket, SOL_SOCKET, SO_ERROR, (char*)&socketerror, &optlen);
-
-	/*
-	* loop until either a timeout or a hard error occurs, or until we
-	* we read data
-	*/
-	while (bytesread < bufferSize)
+	while (nBytesRead < bufferSize)
 	{
-		/*
-		* we use select to see whether there is data available on the
-		* socket or to receive a timeout
-		*/
-		FD_ZERO(&fdvar);                     /* clear the descriptor bitmap */
-		FD_SET(socket, &fdvar);             /* only set our socket         */
 		errno = 0;
-
-		rc = select(socket + 1,      /* the highest socket to check         */
-			&fdvar,           /* check our socket for reading        */
-			(fd_set *)0,   /* not interested in write sockets     */
-			(fd_set *)0,   /* not interested in OOB sockets       */
-			timeout
-		);
+		fd_set readFds;
+		FD_ZERO(&readFds);
+		FD_SET(socket, &readFds);
+		
+		rc = select(socket + 1, &readFds, (fd_set *)NULL, (fd_set *)NULL, timeout);
 		switch (rc)
 		{
 		case 0:
-			/*
-			* a timeout occurred, set the answer accordingly
-			*/
 			return (-1);
 
 		case -1:
-			/*
-			* See whether a real error or an interrupt
-			*/
 			if (errno == EINTR)
 			{
-				pblCgiExitOnError("%s: Interrupt!\n", tag);
+				pblCgiExitOnError("%s: select EINTR, errno %d\n", tag, errno);
 			}
-
-			/*
-			* an error occured during the select
-			*/
-			pblCgiExitOnError("%s: Select error!\n", tag);
+			pblCgiExitOnError("%s: select error, errno %d\n", tag, errno);
 
 		default:
-			/*
-			* we clear any error condition on the socket first
-			*/
-			optlen = sizeof(socketerror);
-			if (getsockopt(socket, SOL_SOCKET, SO_ERROR,
-				(char *)&socketerror, &optlen))
+			optlen = sizeof(socketError);
+			if (getsockopt(socket, SOL_SOCKET, SO_ERROR, (char *)&socketError, &optlen))
 			{
-				pblCgiExitOnError("%s: getsockopt error!\n", tag);
+				pblCgiExitOnError("%s: getsockopt error, errno %d\n", tag, errno);
 			}
 
-			if (socketerror)
+			if (socketError)
 			{
-				/*
-				* the select most likely only came back because there was
-				* an error condition on the socket, therefore we do it
-				* again
-				*/
 				continue;
 			}
 
-			/*
-			* data is ready to be read at the socket, thus read
-			* it byte by byte, we do this in order to be able to
-			* see any newlines
-			*/
 			errno = 0;
-			rc = recvfrom(socket, buffer + bytesread, 1, 0, NULL, NULL);
+			rc = recvfrom(socket, buffer + nBytesRead, 1, 0, NULL, NULL);
 			if (rc < 0)
 			{
-				/*
-				* if we woke up because of a signal
-				*/
 				if (errno == EINTR)
 				{
-					pblCgiExitOnError("%s: Interrupt!\n", tag);
+					pblCgiExitOnError("%s: recvfrom EINTR, errno %d\n", tag, errno);
 				}
-
-				pblCgiExitOnError("%s: Receive error!\n", tag);
+				pblCgiExitOnError("%s: recvfrom error, errno %d\n", tag, errno);
 			}
 			else if (rc == 0)
 			{
-				/*
-				* receiving 0 bytes means the socket has been closed on the
-				* other side, just return the number of bytes read so far
-				*/
-				return(bytesread);
+				return(nBytesRead);
 			}
-
-			/*
-			* we read a byte,
-			*/
-			bytesread++;
-
-			if (*(buffer + bytesread - 1) == '\n')
+			nBytesRead++;
+			if (*(buffer + nBytesRead - 1) == '\n')
 			{
-				/*
-				* we found a newline, give it up for now
-				*/
-				return(bytesread);
+				return(nBytesRead);
 			}
 
-			/*
-			* if there is more space in the buffer
-			*/
-			if (bytesread < (bufferSize - 1))
+			if (nBytesRead < (bufferSize - 1))
 			{
 				continue;
 			}
-
-			/*
-			* we got some data, return the length of it
-			*/
-			return(bytesread);
+			return(nBytesRead);
 		}
 	}
-
-	pblCgiExitOnError("%s: Interrupt!\n", tag);
-	return(-1);
-
+	return(nBytesRead);
 }
 
 /*
-* pblCgiHttpGet
+* httpGet
 *
 * Makes a HTTP request with the given uri to the given host/port
 * and returns the result content in a malloced buffer.
 */
 
-char * pblCgiHttpGet(char * hostname, int port, char * uri, int timeoutsecs)
+static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 {
-	struct timeval tvperiod;
-	static char * tag = "pblCgiHttpGet";
-	int rc = 0;
-	int spaceLeft = 0;
-	int dataLeft = 0;
+	static char * tag = "httpGet";
 
-	int                 socketFd;
-	struct sockaddr_in  serverAddress;
-	short               shortPort = 80;
-
-	struct hostent     *hostinfo;
-
-	char               *sendBuffer;
-	char               *ptr;
-	char                buffer[64 * 1024 + 1];
-
-	tvperiod.tv_sec = timeoutsecs;
-	tvperiod.tv_usec = 0;
-
-	if (port)
-	{
-		shortPort = port;
-	}
-
-	hostinfo = gethostbyname(hostname);
-	if (!hostinfo)
+	struct hostent * hostInfo = gethostbyname(hostname);
+	if (!hostInfo)
 	{
 		pblCgiExitOnError("%s: host \"%s\" is unknown %d.\n", tag, hostname, errno);
 	}
 
+	short shortPort = 80;
+	if (port > 0)
+	{
+		shortPort = port;
+	}
+
+	struct sockaddr_in serverAddress;
 	memset((char*)&serverAddress, 0, sizeof(struct sockaddr_in));
 	serverAddress.sin_family = AF_INET;
 	serverAddress.sin_port = htons(shortPort);
-	memcpy(&(serverAddress.sin_addr.s_addr),
-		hostinfo->h_addr,
-		sizeof(serverAddress.sin_addr.s_addr)
-	);
+	memcpy(&(serverAddress.sin_addr.s_addr), hostInfo->h_addr, sizeof(serverAddress.sin_addr.s_addr));
 
-	socketFd = socket(AF_INET, SOCK_STREAM, 0);
+	int socketFd = socket(AF_INET, SOCK_STREAM, 0);
 	if (socketFd < 0)
 	{
 		pblCgiExitOnError("%s: Could not open stream socket\n", tag);
 	}
 
-	/*
-	* now connect to the server
-	*/
-	if (connect(socketFd, (struct sockaddr *) &serverAddress,
-		sizeof(struct sockaddr_in)) < 0)
+	if (connect(socketFd, (struct sockaddr *) &serverAddress, sizeof(struct sockaddr_in)) < 0)
 	{
 		pblCgiExitOnError("%s: Error in connect() to host \"%s\" on port %d\n",
 			tag, hostname, shortPort);
@@ -273,11 +181,12 @@ char * pblCgiHttpGet(char * hostname, int port, char * uri, int timeoutsecs)
 	/*
 	* write the GET request
 	*/
-	sendBuffer = pblCgiSprintf("GET %s  HTTP/1.0\r\nUser-Agent: DynamicPois\r\n\r\n", uri);
+	char * sendBuffer = pblCgiSprintf("GET %s HTTP/1.0\r\nUser-Agent: DynamicPois\r\n\r\n", uri);
 	PBL_CGI_TRACE("HttpRequest=%s", sendBuffer);
 
-	dataLeft = strlen(sendBuffer);
-	ptr = sendBuffer;
+	int rc = 0;
+	int dataLeft = strlen(sendBuffer);
+	char * ptr = sendBuffer;
 
 	while (dataLeft > 0)
 	{
@@ -303,11 +212,14 @@ char * pblCgiHttpGet(char * hostname, int port, char * uri, int timeoutsecs)
 	/*
 	* read the response
 	*/
-	tvperiod.tv_sec = timeoutsecs;          /* Set timeout values */
+	struct timeval timeoutValue;
+	timeoutValue.tv_sec = timeoutSeconds;
+	timeoutValue.tv_usec = 0;
 
+	char buffer[64 * 1024 + 1];
 	for (;;)
 	{
-		rc = tcp_read(socketFd, buffer, sizeof(buffer) - 1, &tvperiod);
+		rc = tcpRead(socketFd, buffer, sizeof(buffer) - 1, &timeoutValue);
 		if (rc < 0)
 		{
 			pblCgiExitOnError("%s: read failed! rc %s\n", tag, rc);
@@ -332,10 +244,8 @@ char * pblCgiHttpGet(char * hostname, int port, char * uri, int timeoutsecs)
 	pblStringBuilderFree(stringBuilder);
 
 	/*
-	* check the first line, for HTTP error code
-	*  -->  HTTP/1.1 500 Server Error\r\n
+	* check for HTTP error code like HTTP/1.1 500 Server Error
 	*/
-
 	ptr = strstr(result, "HTTP/");
 	if (ptr)
 	{
@@ -350,34 +260,32 @@ char * pblCgiHttpGet(char * hostname, int port, char * uri, int timeoutsecs)
 		}
 	}
 
-	if (ptr != NULL)
+	if (!ptr)
 	{
-		/*
-		* we have a 200 result code
-		* search for the content start
-		*/
-		ptr = strstr(ptr, "\r\n\r\n");
+		pblCgiExitOnError("%s: Expecting HTTP response\n%s\n", tag, result);
+	}
+
+	ptr = strstr(ptr, "\r\n\r\n");
+	if (!ptr)
+	{
+		ptr = strstr(result, "\n\n");
 		if (!ptr)
 		{
-			ptr = strstr(result, "\n\n");
-			if (!ptr)
-			{
-				pblCgiExitOnError("%s: Bad HTTP response, no separator.\n%s\n", tag, result);
-			}
-			else
-			{
-				ptr += 2;
-			}
+			pblCgiExitOnError("%s: Illegal HTTP response, no separator.\n%s\n", tag, result);
 		}
 		else
 		{
-			ptr += 4;
+			ptr += 2;
 		}
+	}
+	else
+	{
+		ptr += 4;
 	}
 	return(ptr);
 }
 
-char * getMatchingString(char start, char end, char * string, char **nextPtr)
+static char * getMatchingString(char * string, char start, char end, char **nextPtr)
 {
 	char * tag = "getMatchingString";
 	char * ptr = string;
@@ -387,13 +295,14 @@ char * getMatchingString(char start, char end, char * string, char **nextPtr)
 	}
 
 	int level = 1;
-	while (*++ptr)
+	int c;
+	while ((c = *++ptr))
 	{
-		if (*ptr == start)
+		if (c == start)
 		{
 			level++;
 		}
-		if (*ptr == end)
+		if (c == end)
 		{
 			level--;
 			if (level < 1)
@@ -410,6 +319,78 @@ char * getMatchingString(char start, char end, char * string, char **nextPtr)
 	return NULL;
 }
 
+static char * getStringBetween(char * string, char * start, char * end)
+{
+	char * tag = "getStringBetween";
+	char * ptr = strstr(string, start);
+	if (!ptr)
+	{
+		pblCgiExitOnError("%s: expected %s in string %s.\n", tag, start, string);
+	}
+
+	char * ptr2 = strstr(ptr, end);
+	if (!ptr2)
+	{
+		pblCgiExitOnError("%s: expected %s in string %s.\n", tag, end, ptr);
+	}
+	return pblCgiStrRangeDup(ptr + strlen(start), ptr2);
+}
+
+static char * replaceStringAtLeastOnce(char * string, char * oldValue, char * newValue)
+{
+	char * tag = "replaceStringAtLeastOnce";
+	char * ptr = string;
+	char * ptr2 = strstr(string, oldValue);
+	if (!ptr2)
+	{
+		pblCgiExitOnError("%s: expected %s at least once in string %s.\n", tag, oldValue, string);
+	}
+	int length = strlen(oldValue);
+
+	PblStringBuilder * stringBuilder = pblStringBuilderNew();
+	if (!stringBuilder)
+	{
+		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+	}
+
+	for (;;)
+	{
+		if (ptr2 > ptr)
+		{
+			if (pblStringBuilderAppendStrN(stringBuilder, ptr2 - ptr, ptr) == ((size_t)-1))
+			{
+				pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+			}
+		}
+		ptr += (ptr2 - ptr) + length;
+
+		if (pblStringBuilderAppendStr(stringBuilder, newValue) == ((size_t)-1))
+		{
+			pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+		}
+
+		ptr2 = strstr(ptr, oldValue);
+		if (!ptr2)
+		{
+			if (pblStringBuilderAppendStr(stringBuilder, ptr) == ((size_t)-1))
+			{
+				pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+			}
+			break;
+		}
+	}
+
+	char * result = pblStringBuilderToString(stringBuilder);
+	if (!result)
+	{
+		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+	}
+	pblStringBuilderFree(stringBuilder);
+	return result;
+}
+
+// Main
+//
 int main(int argc, char * argv[])
 {
 	char * tag = "DynamicPois";
@@ -449,17 +430,17 @@ int main(int argc, char * argv[])
 	}
 	PBL_CGI_TRACE("BaseUri=%s", baseUri);
 
-	char * uri = pblCgiSprintf("%s%s HTTP/1.0\r\nUser-Agent: DynamicPois\r\n\r\n",
+	char * uri = pblCgiSprintf("%s%s",
 		baseUri,
-		"?lang=EN&countryCode=DE&userId=4ed67bd0624f2f7289961da09ab6217ff2af1456&lon=11.5786916&action=update&version=8.5&radius=146&lat=48.1584706&alt=567&layerName=anthropoceneqcuf&accuracy=100"
+		"?lang=EN&countryCode=DE&userId=4ed67bd0624f2f7289961da09ab6217ff2af1456&lon=11.5787019&action=refresh&version=8.5"
+		"&radius=1673&lat=48.1584722&alt=567&layerName=anthropoceneqcuf&accuracy=100"
 	);
 	PBL_CGI_TRACE("Uri=%s", uri);
 
 #ifdef _WIN32
 
-	WSADATA wsaData;
-
 	// Initialize Winsock
+	WSADATA wsaData;
 	int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (result != 0)
 	{
@@ -469,13 +450,12 @@ int main(int argc, char * argv[])
 
 #endif
 
-	char * response = pblCgiHttpGet(hostName, port, uri, 16);
+	char * response = httpGet(hostName, port, uri, 16);
 
 	PBL_CGI_TRACE("Response=%s", response);
 
 	char * start = "{\"hotspots\":";
 	int length = strlen(start);
-
 
 	if (strncmp(start, response, length))
 	{
@@ -483,7 +463,7 @@ int main(int argc, char * argv[])
 	}
 
 	char * rest = NULL;
-	char * hotspotsString = getMatchingString('[', ']', response + length, &rest);
+	char * hotspotsString = getMatchingString(response + length, '[', ']', &rest);
 
 	PBL_CGI_TRACE("hotspotsString=%s", hotspotsString);
 	PBL_CGI_TRACE("rest=%s", rest);
@@ -498,9 +478,18 @@ int main(int argc, char * argv[])
 	while (*ptr == '{')
 	{
 		char * ptr2 = NULL;
-		char * hotspot = getMatchingString('{', '}', ptr, &ptr2);
+		char * hotspot = getMatchingString(ptr, '{', '}', &ptr2);
 
 		PBL_CGI_TRACE("hotspot=%s", hotspot);
+
+		char * lat = getStringBetween(hotspot, "\"lat\":", ",");
+		PBL_CGI_TRACE("lat=%s", lat);
+
+		char * replaced = replaceStringAtLeastOnce(hotspot, "{", "|");
+		PBL_CGI_TRACE("replaced=%s", replaced);
+
+		char * lon = getStringBetween(hotspot, "\"lon\":", ",");
+		PBL_CGI_TRACE("lon=%s", lon);
 
 		if (pblListAdd(list, hotspot) < 0)
 		{
