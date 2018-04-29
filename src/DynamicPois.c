@@ -19,13 +19,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
-$Log: CreateAuthor.c,v $
+$Log: DynamicPois.c,v $
 */
 
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois = "$Id: CreateAuthor.c,v 1.1 2018/04/27 16:21:03 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.1 2018/04/29 01:21:03 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -61,26 +61,26 @@ char * DynamicPois = "$Id: CreateAuthor.c,v 1.1 2018/04/27 16:21:03 peter Exp $"
 
 static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * timeout)
 {
-	char * tag = "tcp_read";
+	char * tag = "tcpRead";
 	int    rc = 0;
-	int    socketError = 0;
-	int    optlen = sizeof(int);
-	int    nBytesRead = 0;
+
+	int socketError = 0;
+	int optlen = sizeof(socketError);
 
 	errno = 0;
-	optlen = sizeof(socketError);
 	if (getsockopt(socket, SOL_SOCKET, SO_ERROR, (char *)&socketError, &optlen))
 	{
-		pblCgiExitOnError("%s: getsockopt %d error, errno %d\n", tag, socket, errno);
+		pblCgiExitOnError("%s: getsockopt(%d) error, errno %d\n", tag, socket, errno);
 	}
 
+	int nBytesRead = 0;
 	while (nBytesRead < bufferSize)
 	{
-		errno = 0;
 		fd_set readFds;
 		FD_ZERO(&readFds);
 		FD_SET(socket, &readFds);
-		
+
+		errno = 0;
 		rc = select(socket + 1, &readFds, (fd_set *)NULL, (fd_set *)NULL, timeout);
 		switch (rc)
 		{
@@ -90,15 +90,15 @@ static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * t
 		case -1:
 			if (errno == EINTR)
 			{
-				pblCgiExitOnError("%s: select EINTR, errno %d\n", tag, errno);
+				pblCgiExitOnError("%s: select(%d) EINTR error, errno %d\n", tag, socket, errno);
 			}
-			pblCgiExitOnError("%s: select error, errno %d\n", tag, errno);
+			pblCgiExitOnError("%s: select(%d) error, errno %d\n", tag, socket, errno);
 
 		default:
-			optlen = sizeof(socketError);
+			errno = 0;
 			if (getsockopt(socket, SOL_SOCKET, SO_ERROR, (char *)&socketError, &optlen))
 			{
-				pblCgiExitOnError("%s: getsockopt error, errno %d\n", tag, errno);
+				pblCgiExitOnError("%s: getsockopt(%d) error, errno %d\n", tag, socket, errno);
 			}
 
 			if (socketError)
@@ -112,9 +112,9 @@ static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * t
 			{
 				if (errno == EINTR)
 				{
-					pblCgiExitOnError("%s: recvfrom EINTR, errno %d\n", tag, errno);
+					pblCgiExitOnError("%s: recvfrom(%d) EINTR error, errno %d\n", tag, socket, errno);
 				}
-				pblCgiExitOnError("%s: recvfrom error, errno %d\n", tag, errno);
+				pblCgiExitOnError("%s: recvfrom(%d) error, errno %d\n", tag, socket, errno);
 			}
 			else if (rc == 0)
 			{
@@ -147,10 +147,11 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 {
 	static char * tag = "httpGet";
 
+	errno = 0;
 	struct hostent * hostInfo = gethostbyname(hostname);
 	if (!hostInfo)
 	{
-		pblCgiExitOnError("%s: host \"%s\" is unknown %d.\n", tag, hostname, errno);
+		pblCgiExitOnError("%s: gethostbyname(%s) error, errno %d.\n", tag, hostname, errno);
 	}
 
 	short shortPort = 80;
@@ -165,22 +166,20 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 	serverAddress.sin_port = htons(shortPort);
 	memcpy(&(serverAddress.sin_addr.s_addr), hostInfo->h_addr, sizeof(serverAddress.sin_addr.s_addr));
 
+	errno = 0;
 	int socketFd = socket(AF_INET, SOCK_STREAM, 0);
 	if (socketFd < 0)
 	{
-		pblCgiExitOnError("%s: Could not open stream socket\n", tag);
+		pblCgiExitOnError("%s: socket() error, errno %d\n", tag, errno);
 	}
 
+	errno = 0;
 	if (connect(socketFd, (struct sockaddr *) &serverAddress, sizeof(struct sockaddr_in)) < 0)
 	{
-		pblCgiExitOnError("%s: Error in connect() to host \"%s\" on port %d\n",
-			tag, hostname, shortPort);
+		pblCgiExitOnError("%s: connect(%d) error, host '%s' on port %d, errno %d\n", tag, socketFd, hostname, shortPort, errno);
 		socket_close(socketFd);
 	}
 
-	/*
-	* write the GET request
-	*/
 	char * sendBuffer = pblCgiSprintf("GET %s HTTP/1.0\r\nUser-Agent: DynamicPois\r\n\r\n", uri);
 	PBL_CGI_TRACE("HttpRequest=%s", sendBuffer);
 
@@ -190,6 +189,7 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 
 	while (dataLeft > 0)
 	{
+		errno = 0;
 		rc = send(socketFd, ptr, dataLeft, 0);
 		if (rc > 0)
 		{
@@ -198,7 +198,7 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 		}
 		else
 		{
-			pblCgiExitOnError("%s: send failed! rc %s\n", tag, rc);
+			pblCgiExitOnError("%s: send(%d) error, rc %d, errno %d\n", tag, socketFd, rc, errno);
 		}
 	}
 	PBL_FREE(sendBuffer);
@@ -222,7 +222,7 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 		rc = tcpRead(socketFd, buffer, sizeof(buffer) - 1, &timeoutValue);
 		if (rc < 0)
 		{
-			pblCgiExitOnError("%s: read failed! rc %s\n", tag, rc);
+			pblCgiExitOnError("%s: read failed! rc %d\n", tag, rc);
 		}
 		else if (rc == 0)
 		{
@@ -291,7 +291,7 @@ static char * getMatchingString(char * string, char start, char end, char **next
 	char * ptr = string;
 	if (start != *ptr)
 	{
-		pblCgiExitOnError("%s: expected %c at start of string %s.\n", tag, start, string);
+		pblCgiExitOnError("%s: expected %c at start of string '%s'\n", tag, start, string);
 	}
 
 	int level = 1;
@@ -315,7 +315,7 @@ static char * getMatchingString(char * string, char start, char end, char **next
 			}
 		}
 	}
-	pblCgiExitOnError("%s: unexpected end of string in %s.\n", tag, string);
+	pblCgiExitOnError("%s: unexpected end of string in '%s'\n", tag, string);
 	return NULL;
 }
 
@@ -325,13 +325,13 @@ static char * getStringBetween(char * string, char * start, char * end)
 	char * ptr = strstr(string, start);
 	if (!ptr)
 	{
-		pblCgiExitOnError("%s: expected %s in string %s.\n", tag, start, string);
+		pblCgiExitOnError("%s: expected starting '%s' in string '%s'\n", tag, start, string);
 	}
 
 	char * ptr2 = strstr(ptr, end);
 	if (!ptr2)
 	{
-		pblCgiExitOnError("%s: expected %s in string %s.\n", tag, end, ptr);
+		pblCgiExitOnError("%s: expected ending '%s' in string '%s'\n", tag, end, ptr);
 	}
 	return pblCgiStrRangeDup(ptr + strlen(start), ptr2);
 }
@@ -343,7 +343,7 @@ static char * replaceStringAtLeastOnce(char * string, char * oldValue, char * ne
 	char * ptr2 = strstr(string, oldValue);
 	if (!ptr2)
 	{
-		pblCgiExitOnError("%s: expected %s at least once in string %s.\n", tag, oldValue, string);
+		pblCgiExitOnError("%s: expected '%s' at least once in string '%s'\n", tag, oldValue, string);
 	}
 	int length = strlen(oldValue);
 
@@ -459,7 +459,7 @@ int main(int argc, char * argv[])
 
 	if (strncmp(start, response, length))
 	{
-		pblCgiExitOnError("%s: Bad response start %s\n", tag, response);
+		pblCgiExitOnError("%s: Bad response start '%s'\n", tag, response);
 	}
 
 	char * rest = NULL;
@@ -501,7 +501,6 @@ int main(int argc, char * argv[])
 		}
 		ptr = ptr2 + 1;
 	}
-
 
 	return 0;
 }
