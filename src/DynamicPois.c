@@ -20,6 +20,12 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.3  2018/04/29 20:17:56  peter
+Making id of pois unique
+
+Revision 1.2  2018/04/29 20:00:17  peter
+Linux port
+
 Revision 1.1  2018/04/29 18:42:08  peter
 More work on service
 
@@ -28,7 +34,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.1 2018/04/29 18:42:08 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.3 2018/04/29 20:17:56 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -45,21 +51,21 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.1 2018/04/29 18:42:08 peter Ex
 #include <winsock2.h>
 #include <direct.h>
 
+#define socket_close closesocket
+
 #else
 
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <netdb.h>
+#include <netinet/in.h>
+
+#define socket_close close
 
 #endif
 
 #include "pblCgi.h"
-
-#ifdef _WIN32
-
-#define socket_close closesocket
-
-#endif
 
 static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * timeout)
 {
@@ -326,13 +332,13 @@ static char * getStringBetween(char * string, char * start, char * end)
 	{
 		pblCgiExitOnError("%s: expected starting '%s' in string '%s'\n", tag, start, string);
 	}
-
+	ptr += strlen(start);
 	char * ptr2 = strstr(ptr, end);
 	if (!ptr2)
 	{
 		pblCgiExitOnError("%s: expected ending '%s' in string '%s'\n", tag, end, ptr);
 	}
-	return pblCgiStrRangeDup(ptr + strlen(start), ptr2);
+	return pblCgiStrRangeDup(ptr, ptr2);
 }
 
 void putString(char * string, PblStringBuilder * stringBuilder)
@@ -463,6 +469,7 @@ int main(int argc, char * argv[])
 
 	for (int i = 0; i < 2; i++)
 	{
+		int idDifference = i * 1000000;
 		int latDifference = i * 100;
 
 		for (int j = 0; j < nPois; j++)
@@ -490,14 +497,32 @@ int main(int argc, char * argv[])
 				char * newLat = pblCgiSprintf("\"lat\":%d,", atoi(lat) + latDifference);
 				PBL_CGI_TRACE("newLat=%s", newLat);
 
-				char * replaced = pblCgiStrReplace(hotspot, oldLat, newLat);
-				putString(replaced, stringBuilder);
-				PBL_CGI_TRACE("replaced=%s", replaced);
+				char * replacedLat = pblCgiStrReplace(hotspot, oldLat, newLat);
+				PBL_CGI_TRACE("replacedLat=%s", replacedLat);
 
+				char * id = getStringBetween(replacedLat, "\"id\":\"", "\"");
+				PBL_CGI_TRACE("id=%s", id);
+
+				char * oldId = pblCgiSprintf("\"id\":\"%s\"", id);
+				PBL_CGI_TRACE("oldId=%s", oldId);
+
+				char * newId = pblCgiSprintf("\"id\":\"%d\"", atoi(id) + idDifference);
+				PBL_CGI_TRACE("newId=%s", newId);
+
+				char * replacedId = pblCgiStrReplace(replacedLat, oldId, newId);
+				PBL_CGI_TRACE("replacedId=%s", replacedId);
+
+				putString(replacedId, stringBuilder);
+				
 				PBL_FREE(lat);
 				PBL_FREE(oldLat);
 				PBL_FREE(newLat);
-				PBL_FREE(replaced);
+				PBL_FREE(replacedLat);
+
+				PBL_FREE(id);
+				PBL_FREE(oldId);
+				PBL_FREE(newId);
+				PBL_FREE(replacedId);
 			}
 			putString("}", stringBuilder);
 		}
