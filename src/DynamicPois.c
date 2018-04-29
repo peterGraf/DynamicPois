@@ -20,12 +20,15 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.1  2018/04/29 18:42:08  peter
+More work on service
+
 */
 
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.1 2018/04/29 01:21:03 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.1 2018/04/29 18:42:08 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -51,7 +54,6 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.1 2018/04/29 01:21:03 peter Ex
 #endif
 
 #include "pblCgi.h"
-#include "json.h"
 
 #ifdef _WIN32
 
@@ -209,9 +211,6 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
 	}
 
-	/*
-	* read the response
-	*/
 	struct timeval timeoutValue;
 	timeoutValue.tv_sec = timeoutSeconds;
 	timeoutValue.tv_usec = 0;
@@ -336,57 +335,15 @@ static char * getStringBetween(char * string, char * start, char * end)
 	return pblCgiStrRangeDup(ptr + strlen(start), ptr2);
 }
 
-static char * replaceStringAtLeastOnce(char * string, char * oldValue, char * newValue)
+void putString(char * string, PblStringBuilder * stringBuilder)
 {
-	char * tag = "replaceStringAtLeastOnce";
-	char * ptr = string;
-	char * ptr2 = strstr(string, oldValue);
-	if (!ptr2)
-	{
-		pblCgiExitOnError("%s: expected '%s' at least once in string '%s'\n", tag, oldValue, string);
-	}
-	int length = strlen(oldValue);
+	char * tag = "putString";
 
-	PblStringBuilder * stringBuilder = pblStringBuilderNew();
-	if (!stringBuilder)
+	if (pblStringBuilderAppendStr(stringBuilder, string) == ((size_t)-1))
 	{
 		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
 	}
-
-	for (;;)
-	{
-		if (ptr2 > ptr)
-		{
-			if (pblStringBuilderAppendStrN(stringBuilder, ptr2 - ptr, ptr) == ((size_t)-1))
-			{
-				pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
-			}
-		}
-		ptr += (ptr2 - ptr) + length;
-
-		if (pblStringBuilderAppendStr(stringBuilder, newValue) == ((size_t)-1))
-		{
-			pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
-		}
-
-		ptr2 = strstr(ptr, oldValue);
-		if (!ptr2)
-		{
-			if (pblStringBuilderAppendStr(stringBuilder, ptr) == ((size_t)-1))
-			{
-				pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
-			}
-			break;
-		}
-	}
-
-	char * result = pblStringBuilderToString(stringBuilder);
-	if (!result)
-	{
-		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
-	}
-	pblStringBuilderFree(stringBuilder);
-	return result;
+	fputs(string, stdout);
 }
 
 // Main
@@ -402,6 +359,8 @@ int main(int argc, char * argv[])
 
 	char * traceFile = pblCgiConfigValue(PBL_CGI_TRACE_FILE, "");
 	pblCgiInitTrace(&startTime, traceFile);
+
+	pblCgiParseQuery(argc, argv);
 
 	char * hostName = pblCgiConfigValue("HostName", "www.mission-base.de");
 	if (pblCgiStrIsNullOrWhiteSpace(hostName))
@@ -430,11 +389,7 @@ int main(int argc, char * argv[])
 	}
 	PBL_CGI_TRACE("BaseUri=%s", baseUri);
 
-	char * uri = pblCgiSprintf("%s%s",
-		baseUri,
-		"?lang=EN&countryCode=DE&userId=4ed67bd0624f2f7289961da09ab6217ff2af1456&lon=11.5787019&action=refresh&version=8.5"
-		"&radius=1673&lat=48.1584722&alt=567&layerName=anthropoceneqcuf&accuracy=100"
-	);
+	char * uri = pblCgiSprintf("%s?%s", baseUri, pblCgiQueryString);
 	PBL_CGI_TRACE("Uri=%s", uri);
 
 #ifdef _WIN32
@@ -459,7 +414,16 @@ int main(int argc, char * argv[])
 
 	if (strncmp(start, response, length))
 	{
-		pblCgiExitOnError("%s: Bad response start '%s'\n", tag, response);
+		fputs("Content-Type: application/json\n\n", stdout);
+		fputs(response, stdout);
+		PBL_CGI_TRACE("No replacement");
+		return(0);
+	}
+
+	PblStringBuilder * stringBuilder = pblStringBuilderNew();
+	if (!stringBuilder)
+	{
+		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
 	}
 
 	char * rest = NULL;
@@ -480,17 +444,6 @@ int main(int argc, char * argv[])
 		char * ptr2 = NULL;
 		char * hotspot = getMatchingString(ptr, '{', '}', &ptr2);
 
-		PBL_CGI_TRACE("hotspot=%s", hotspot);
-
-		char * lat = getStringBetween(hotspot, "\"lat\":", ",");
-		PBL_CGI_TRACE("lat=%s", lat);
-
-		char * replaced = replaceStringAtLeastOnce(hotspot, "{", "|");
-		PBL_CGI_TRACE("replaced=%s", replaced);
-
-		char * lon = getStringBetween(hotspot, "\"lon\":", ",");
-		PBL_CGI_TRACE("lon=%s", lon);
-
 		if (pblListAdd(list, hotspot) < 0)
 		{
 			pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
@@ -501,6 +454,59 @@ int main(int argc, char * argv[])
 		}
 		ptr = ptr2 + 1;
 	}
+
+	putString("Content-Type: application/json\n\n", stringBuilder);
+	putString(start, stringBuilder);
+	putString("[", stringBuilder);
+
+	int nPois = pblListSize(list);
+
+	for (int i = 0; i < 2; i++)
+	{
+		int latDifference = i * 100;
+
+		for (int j = 0; j < nPois; j++)
+		{
+			if (i > 0 || j > 0)
+			{
+				putString(",", stringBuilder);
+			}
+			putString("{", stringBuilder);
+
+			char * hotspot = pblListGet(list, j);
+			if (i == 0)
+			{
+				putString(hotspot, stringBuilder);
+				PBL_CGI_TRACE("hotspot=%s", hotspot);
+			}
+			else
+			{
+				char * lat = getStringBetween(hotspot, "\"lat\":", ",");
+				PBL_CGI_TRACE("lat=%s", lat);
+
+				char * oldLat = pblCgiSprintf("\"lat\":%s,", lat);
+				PBL_CGI_TRACE("oldLat=%s", oldLat);
+
+				char * newLat = pblCgiSprintf("\"lat\":%d,", atoi(lat) + latDifference);
+				PBL_CGI_TRACE("newLat=%s", newLat);
+
+				char * replaced = pblCgiStrReplace(hotspot, oldLat, newLat);
+				putString(replaced, stringBuilder);
+				PBL_CGI_TRACE("replaced=%s", replaced);
+
+				PBL_FREE(lat);
+				PBL_FREE(oldLat);
+				PBL_FREE(newLat);
+				PBL_FREE(replaced);
+			}
+			putString("}", stringBuilder);
+		}
+	}
+	putString("]", stringBuilder);
+	putString(rest, stringBuilder);
+
+	PBL_CGI_TRACE("output=%s", pblStringBuilderToString(stringBuilder));
+	pblStringBuilderFree(stringBuilder);
 
 	return 0;
 }
