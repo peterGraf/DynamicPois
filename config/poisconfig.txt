@@ -1,0 +1,41 @@
+# Configuration file for dynamic pois service
+#
+HostName				www.mission-base.de
+Port					80
+BaseUri					/porpoise/web/porpoise.php
+
+# HitDirectory, the directory where the hits are to be counted, the directory needs to be writable by the cgi program
+#
+HitDirectory            D:/Temp
+
+# Default HitDuration for all areas without specific values
+#
+HitDuration             1000
+
+# Default HitCountLevels for all areas without specific values
+#
+HitCountLevels          3, 5, 7, 10, 20, 30
+HitDuplicators          1, 2, 3, 4, 5, 6, 12
+
+# Areas of relevance must be given with consecutive postfixes starting with 1
+# each area must be given as comma separated LAT,LON,LAT,LON value of its southwestern and northeastern corner.
+# The values need to be integers in millionths of degrees.
+#
+# e.g. Area_1           48000000,11000000,49000000,15000000
+#
+Area_1                  48000000,11000000,49000000,12000000
+
+# HitDuration, number of seconds that hits are counted for
+#
+Area_1_HitDuration             1200
+
+# HitCountLevels, if there a less than hit count level hits, the corresponding duplicator is used
+#
+Area_1_HitCountLevels          3, 5, 7, 10, 20
+Area_1_HitDuplicators          1, 2, 6, 10, 15, 20
+
+# Traces are only written if the file exists, the file needs to be writable by the cgi program
+#
+TraceFilePath           D:/temp/dynamicPoisTrace.txt
+
+
