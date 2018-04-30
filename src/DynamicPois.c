@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.6  2018/04/30 22:29:20  peter
+Improved ht count
+
 Revision 1.5  2018/04/30 16:06:04  peter
 Linux port of hit counting
 
@@ -40,7 +43,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.5 2018/04/30 16:06:04 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.6 2018/04/30 22:29:20 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -72,6 +75,10 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.5 2018/04/30 16:06:04 peter Ex
 #include <sys/stat.h>
 
 #define socket_close close
+
+#ifndef h_addr
+#define h_addr h_addr_list[0] /* for backward compatibility */
+#endif
 
 #endif
 
@@ -420,34 +427,6 @@ static char * getArea()
 	return NULL;
 }
 
-#ifdef _WIN32
-
-static int isHit(int hitDuration, HANDLE hFind, WIN32_FIND_DATA FindData)
-{
-	char * timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL) - hitDuration, "%02d%02d%02d-%02d%02d%02d");
-
-	SYSTEMTIME stUTC, stLocal;
-
-	// Convert the last-write time to local time.
-	FileTimeToSystemTime(&FindData.ftCreationTime, &stUTC);
-	SystemTimeToTzSpecificLocalTime(NULL, &stUTC, &stLocal);
-
-	// Build a string showing the date and time.
-	char * creationTime = pblCgiSprintf(
-		"%02d%02d%02d-%02d%02d%02d",
-		stLocal.wYear - 2000, stLocal.wMonth, stLocal.wDay,
-		stLocal.wHour, stLocal.wMinute, stLocal.wSecond);
-
-	int rc = strcmp(creationTime, timeString) > 0 ? 1 : 0;
-
-	PBL_FREE(timeString);
-	PBL_FREE(creationTime);
-
-	return rc;
-}
-
-#endif
-
 static char * areaConfigValue(char * area, char *configKey)
 {
 	char * key = pblCgiSprintf("%s_%s", area, configKey);
@@ -498,9 +477,21 @@ static int getHitCount(char * area)
 	}
 	fclose(hitFile);
 
+	PBL_FREE(hitFileName);
+	PBL_FREE(hitFilePath);
+	PBL_FREE(timeString);
+
+	timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL) - hitDuration, "%02d%02d%02d-%02d%02d%02d");
+	hitFileName = pblCgiSprintf("%s_%s.txt", area, timeString);
+	hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, hitFileName);
+
+	PBL_CGI_TRACE("Oldest HitFileName %s", hitFilePath);
+
 	int hitCount = 0;
 
 #ifdef _WIN32
+
+	static char * tag = "getHitCount";
 
 	HANDLE hFind;
 	WIN32_FIND_DATA FindData;
@@ -508,78 +499,72 @@ static int getHitCount(char * area)
 	// Find the first file
 
 	char * pattern = pblCgiSprintf("%s/%s*.*", hitDirectory, area);
-	//pattern = pblCgiStrReplace(pattern, "/", "\\");
 
 	PBL_CGI_TRACE("FindFirstFile %s", pattern);
 
 	size_t size = strlen(pattern) + 1;
-	wchar_t* lFilePattern = malloc(sizeof(wchar_t) * size);
+	wchar_t * wFilePattern = pbl_malloc0(tag, sizeof(wchar_t) * size);
 
 	size_t outSize;
-	mbstowcs_s(&outSize, lFilePattern, size, pattern, size - 1);
-	hFind = FindFirstFile(lFilePattern, &FindData);
+	mbstowcs_s(&outSize, wFilePattern, size, pattern, size - 1);
 
+	size = strlen(hitFileName) + 1;
+	wchar_t * wHitFileName = pbl_malloc0(tag, sizeof(wchar_t) * size);
+	mbstowcs_s(&outSize, wHitFileName, size, hitFileName, size - 1);
+
+	hFind = FindFirstFile(wFilePattern, &FindData);
 	if (INVALID_HANDLE_VALUE == hFind)
 	{
 		PBL_CGI_TRACE("FindFirstFile failed (%d)\n", GetLastError());
 		return 0;
 	}
 
-	hitCount += isHit(hitDuration, hFind, FindData);
-
-	while (FindNextFile(hFind, &FindData))
+	do
 	{
-		hitCount += isHit(hitDuration, hFind, FindData);
-	}
+		if (wcscmp(wHitFileName, FindData.cFileName) > 0)
+		{
+			continue;
+		}
+		hitCount++;
+
+	} while (FindNextFile(hFind, &FindData));
 
 	FindClose(hFind);
+
+	PBL_FREE(wFilePattern);
+	PBL_FREE(wHitFileName);
 
 #else
 
 	int length = strlen(area) + 1;
 	struct dirent * entry;
 	DIR * directory = opendir(hitDirectory);
-	if (directory)
-	{
-	    long firstHitTime = time(NULL) - hitDuration;
-
-
-		while ((entry = readdir(directory)) != NULL)
-		{
-			if (strncmp(hitFileName, entry->d_name, length))
-			{
-				continue;
-			}
-
-	        char * directoryFilePath = pblCgiSprintf("%s/%s", hitDirectory, entry->d_name);
-
-	        struct stat st;
-	        if (stat(directoryFilePath, &st) != 0)
-	        {
-	        	PBL_CGI_TRACE("Failed to stat hitFile %s, %d", directoryFilePath, errno);
-	        	PBL_FREE(directoryFilePath);
-	        	continue;
-	        }
-	        PBL_FREE(directoryFilePath);
-
-	        if (firstHitTime > st.st_ctim.tv_sec)
-	        {
-	        	continue;
-	        }
-			hitCount++;
-		}
-		closedir(directory);
-	}
-	else
+	if (!directory)
 	{
 		PBL_CGI_TRACE("Failed to opendir %s, %d", hitDirectory, errno);
+		return 0;
 	}
+
+	while ((entry = readdir(directory)) != NULL)
+	{
+		if (strncmp(hitFileName, entry->d_name, length))
+		{
+			continue;
+		}
+
+		if (strcmp(hitFileName, entry->d_name) > 0)
+		{
+			continue;
+		}
+		hitCount++;
+	}
+	closedir(directory);
+
+#endif
 
 	PBL_FREE(hitFileName);
 	PBL_FREE(hitFilePath);
 	PBL_FREE(timeString);
-
-#endif
 
 	return hitCount;
 }
