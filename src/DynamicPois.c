@@ -20,6 +20,12 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.5  2018/04/30 16:06:04  peter
+Linux port of hit counting
+
+Revision 1.4  2018/04/30 14:22:54  peter
+Added hit count handling
+
 Revision 1.3  2018/04/29 20:17:56  peter
 Making id of pois unique
 
@@ -34,7 +40,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.3 2018/04/29 20:17:56 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.5 2018/04/30 16:06:04 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -50,6 +56,7 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.3 2018/04/29 20:17:56 peter Ex
 
 #include <winsock2.h>
 #include <direct.h>
+#include <windows.h> 
 
 #define socket_close closesocket
 
@@ -60,6 +67,9 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.3 2018/04/29 20:17:56 peter Ex
 #include <unistd.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <dirent.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #define socket_close close
 
@@ -101,6 +111,7 @@ static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * t
 				pblCgiExitOnError("%s: select(%d) EINTR error, errno %d\n", tag, socket, errno);
 			}
 			pblCgiExitOnError("%s: select(%d) error, errno %d\n", tag, socket, errno);
+			break;
 
 		default:
 			errno = 0;
@@ -341,7 +352,7 @@ static char * getStringBetween(char * string, char * start, char * end)
 	return pblCgiStrRangeDup(ptr, ptr2);
 }
 
-void putString(char * string, PblStringBuilder * stringBuilder)
+static void putString(char * string, PblStringBuilder * stringBuilder)
 {
 	char * tag = "putString";
 
@@ -350,6 +361,353 @@ void putString(char * string, PblStringBuilder * stringBuilder)
 		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
 	}
 	fputs(string, stdout);
+}
+
+static int strListElementFree(void * context, int index, void * element)
+{
+	PBL_FREE(element);
+	return 0;
+}
+
+static void strListFree(PblList * list)
+{
+	pblCollectionAggregate(list, NULL, strListElementFree);
+	pblListFree(list);
+}
+
+static char * getArea()
+{
+	for (int i = 1; i <= 1000; i++)
+	{
+		char * areaKey = pblCgiSprintf("Area_%d", i);
+		char * areaValue = pblCgiConfigValue(areaKey, NULL);
+
+		if (pblCgiStrIsNullOrWhiteSpace(areaValue))
+		{
+			PBL_CGI_TRACE("No value for area %s", areaKey);
+			PBL_FREE(areaKey);
+			return NULL;
+		}
+
+		PblList * locationList = pblCgiStrSplitToList(areaValue, ",");
+		int size = pblListSize(locationList);
+		if (size != 4)
+		{
+			PBL_CGI_TRACE("%s, expecting 4 location values, current value is %s", areaKey, areaValue);
+
+			strListFree(locationList);
+			PBL_FREE(areaKey);
+			continue;
+		}
+		int myLat = (int)(1000000.0 * strtof(pblCgiQueryValue("lat"), NULL));
+		int myLon = (int)(1000000.0 * strtof(pblCgiQueryValue("lon"), NULL));
+
+		if (myLat < atoi(pblListGet(locationList, 0)) || myLon < atoi(pblListGet(locationList, 1))
+			|| myLat > atoi(pblListGet(locationList, 2)) || myLon > atoi(pblListGet(locationList, 3)))
+		{
+			PBL_CGI_TRACE("%s, lat %d, lon %d is outside area value %s", areaKey, myLat, myLon, areaValue);
+
+			strListFree(locationList);
+			PBL_FREE(areaKey);
+			continue;
+		}
+
+		PBL_CGI_TRACE("%s, lat %d, lon %d is inside area value %s", areaKey, myLat, myLon, areaValue);
+
+		strListFree(locationList);
+		return areaKey;
+	}
+	return NULL;
+}
+
+#ifdef _WIN32
+
+static int isHit(int hitDuration, HANDLE hFind, WIN32_FIND_DATA FindData)
+{
+	char * timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL) - hitDuration, "%02d%02d%02d-%02d%02d%02d");
+
+	SYSTEMTIME stUTC, stLocal;
+
+	// Convert the last-write time to local time.
+	FileTimeToSystemTime(&FindData.ftCreationTime, &stUTC);
+	SystemTimeToTzSpecificLocalTime(NULL, &stUTC, &stLocal);
+
+	// Build a string showing the date and time.
+	char * creationTime = pblCgiSprintf(
+		"%02d%02d%02d-%02d%02d%02d",
+		stLocal.wYear - 2000, stLocal.wMonth, stLocal.wDay,
+		stLocal.wHour, stLocal.wMinute, stLocal.wSecond);
+
+	int rc = strcmp(creationTime, timeString) > 0 ? 1 : 0;
+
+	PBL_FREE(timeString);
+	PBL_FREE(creationTime);
+
+	return rc;
+}
+
+#endif
+
+static char * areaConfigValue(char * area, char *configKey)
+{
+	char * key = pblCgiSprintf("%s_%s", area, configKey);
+	char * valueString = pblCgiConfigValue(key, "");
+
+	if (pblCgiStrIsNullOrWhiteSpace(valueString))
+	{
+		valueString = pblCgiConfigValue(configKey, "");
+		if (pblCgiStrIsNullOrWhiteSpace(valueString))
+		{
+			PBL_CGI_TRACE("No value for %s", key);
+		}
+	}
+	PBL_FREE(key);
+	return valueString;
+}
+
+static int getHitCount(char * area)
+{
+	char * hitDurationString = areaConfigValue(area, "HitDuration");
+	int hitDuration = atoi(hitDurationString);
+	if (hitDuration < 1)
+	{
+		PBL_CGI_TRACE("Bad value for HitDuration %d", hitDuration);
+	}
+	PBL_CGI_TRACE("HitDuration is %d", hitDuration);
+
+	char * timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL), "%02d%02d%02d-%02d%02d%02d");
+
+	char * hitDirectory = pblCgiConfigValue("HitDirectory", "/tmp");
+	if (pblCgiStrIsNullOrWhiteSpace(hitDirectory))
+	{
+		PBL_CGI_TRACE("No value for HitDirectory");
+		return 0;
+	}
+	PBL_CGI_TRACE("HitDirectory %s", hitDirectory);
+
+	char * hitFileName = pblCgiSprintf("%s_%s.txt", area, timeString);
+	char * hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, hitFileName);
+
+	PBL_CGI_TRACE("HitFilePath %s", hitFilePath);
+
+	FILE * hitFile = pblCgiFopen(hitFilePath, "a+");
+	if (hitFile == NULL)
+	{
+		PBL_CGI_TRACE("Failed to open hitFile %s", hitFilePath);
+		return 0;
+	}
+	fclose(hitFile);
+
+	int hitCount = 0;
+
+#ifdef _WIN32
+
+	HANDLE hFind;
+	WIN32_FIND_DATA FindData;
+
+	// Find the first file
+
+	char * pattern = pblCgiSprintf("%s/%s*.*", hitDirectory, area);
+	//pattern = pblCgiStrReplace(pattern, "/", "\\");
+
+	PBL_CGI_TRACE("FindFirstFile %s", pattern);
+
+	size_t size = strlen(pattern) + 1;
+	wchar_t* lFilePattern = malloc(sizeof(wchar_t) * size);
+
+	size_t outSize;
+	mbstowcs_s(&outSize, lFilePattern, size, pattern, size - 1);
+	hFind = FindFirstFile(lFilePattern, &FindData);
+
+	if (INVALID_HANDLE_VALUE == hFind)
+	{
+		PBL_CGI_TRACE("FindFirstFile failed (%d)\n", GetLastError());
+		return 0;
+	}
+
+	hitCount += isHit(hitDuration, hFind, FindData);
+
+	while (FindNextFile(hFind, &FindData))
+	{
+		hitCount += isHit(hitDuration, hFind, FindData);
+	}
+
+	FindClose(hFind);
+
+#else
+
+	int length = strlen(area) + 1;
+	struct dirent * entry;
+	DIR * directory = opendir(hitDirectory);
+	if (directory)
+	{
+	    long firstHitTime = time(NULL) - hitDuration;
+
+
+		while ((entry = readdir(directory)) != NULL)
+		{
+			if (strncmp(hitFileName, entry->d_name, length))
+			{
+				continue;
+			}
+
+	        char * directoryFilePath = pblCgiSprintf("%s/%s", hitDirectory, entry->d_name);
+
+	        struct stat st;
+	        if (stat(directoryFilePath, &st) != 0)
+	        {
+	        	PBL_CGI_TRACE("Failed to stat hitFile %s, %d", directoryFilePath, errno);
+	        	PBL_FREE(directoryFilePath);
+	        	continue;
+	        }
+	        PBL_FREE(directoryFilePath);
+
+	        if (firstHitTime > st.st_ctim.tv_sec)
+	        {
+	        	continue;
+	        }
+			hitCount++;
+		}
+		closedir(directory);
+	}
+	else
+	{
+		PBL_CGI_TRACE("Failed to opendir %s, %d", hitDirectory, errno);
+	}
+
+	PBL_FREE(hitFileName);
+	PBL_FREE(hitFilePath);
+	PBL_FREE(timeString);
+
+#endif
+
+	return hitCount;
+}
+
+static int getHitDuplicator(char * area, int hitCount)
+{
+	char * hitCountLevelsString = areaConfigValue(area, "HitCountLevels");
+	char * hitDuplicatorsString = areaConfigValue(area, "HitDuplicators");
+
+	PblList * hitCountLevelsList = pblCgiStrSplitToList(hitCountLevelsString, ",");
+	int levelSize = pblListSize(hitCountLevelsList);
+	if (levelSize < 1)
+	{
+		PBL_CGI_TRACE("%s, at least one value for HitCountLevels, value '%s'", area, hitCountLevelsString);
+
+		strListFree(hitCountLevelsList);
+		return 0;
+	}
+
+	PblList * hitDuplicatorsList = pblCgiStrSplitToList(hitDuplicatorsString, ",");
+	int duplicatorSize = pblListSize(hitDuplicatorsList);
+	if (duplicatorSize < 1)
+	{
+		PBL_CGI_TRACE("%s, at least one value for HitDuplicators, value '%s'", area, hitDuplicatorsString);
+
+		strListFree(hitCountLevelsList);
+		strListFree(hitDuplicatorsList);
+		return 0;
+	}
+
+	for (int i = 0; i < levelSize; i++)
+	{
+		int countLevel = atoi(pblListGet(hitCountLevelsList, i));
+		if (hitCount < countLevel)
+		{
+			int rc = 0;
+			if (i < duplicatorSize)
+			{
+				rc = atoi(pblListGet(hitDuplicatorsList, i));
+			}
+			else
+			{
+				rc = atoi(pblListGet(hitDuplicatorsList, duplicatorSize - 1));
+			}
+			strListFree(hitCountLevelsList);
+			strListFree(hitDuplicatorsList);
+			return rc;
+		}
+	}
+
+	int rc = atoi(pblListGet(hitDuplicatorsList, duplicatorSize - 1));
+	strListFree(hitCountLevelsList);
+	strListFree(hitDuplicatorsList);
+	return rc;
+}
+
+static char * changeLat(char * string, int i, int difference)
+{
+	int factor = 1 + (i - 1) / 8;
+	int modulo = (i - 1) % 8;
+
+	switch (modulo)
+	{
+	case 0:
+	case 2:
+	case 3:
+		difference *= factor;
+		break;
+	case 1:
+	case 4:
+	case 5:
+		difference *= -factor;
+		break;
+	default:
+		return pblCgiStrDup(string);
+	}
+
+	char * lat = getStringBetween(string, "\"lat\":", ",");
+	PBL_CGI_TRACE("lat=%s", lat);
+
+	char * oldLat = pblCgiSprintf("\"lat\":%s,", lat);
+	PBL_CGI_TRACE("oldLat=%s", oldLat);
+
+	char * newLat = pblCgiSprintf("\"lat\":%d,", atoi(lat) + difference);
+	PBL_CGI_TRACE("newLat=%s", newLat);
+
+	char * replacedLat = pblCgiStrReplace(string, oldLat, newLat);
+
+	PBL_FREE(lat);
+	PBL_FREE(oldLat);
+	PBL_FREE(newLat);
+
+	return replacedLat;
+}
+
+static char * changeLon(char * string, int i, int difference)
+{
+	int factor = 1 + (i - 1) / 8;
+	int modulo = (i - 1) % 8;
+
+	if (modulo >= 2)
+	{
+		if (modulo % 2)
+		{
+			difference *= factor;
+		}
+		else
+		{
+			difference *= -factor;
+		}
+		char * lon = getStringBetween(string, "\"lon\":", ",");
+		PBL_CGI_TRACE("lon=%s", lon);
+
+		char * oldLon = pblCgiSprintf("\"lon\":%s,", lon);
+		PBL_CGI_TRACE("oldLon=%s", oldLon);
+
+		char * newLon = pblCgiSprintf("\"lon\":%d,", atoi(lon) + difference);
+		PBL_CGI_TRACE("newLon=%s", newLon);
+
+		char * replacedLon = pblCgiStrReplace(string, oldLon, newLon);
+
+		PBL_FREE(lon);
+		PBL_FREE(oldLon);
+		PBL_FREE(newLon);
+
+		return replacedLon;
+	}
+	return pblCgiStrDup(string);
 }
 
 // Main
@@ -415,6 +773,15 @@ int main(int argc, char * argv[])
 
 	PBL_CGI_TRACE("Response=%s", response);
 
+	char * area = getArea();
+	if (area == NULL)
+	{
+		fputs("Content-Type: application/json\n\n", stdout);
+		fputs(response, stdout);
+		PBL_CGI_TRACE("Not in any area");
+		return(0);
+	}
+
 	char * start = "{\"hotspots\":";
 	int length = strlen(start);
 
@@ -425,6 +792,29 @@ int main(int argc, char * argv[])
 		PBL_CGI_TRACE("No replacement");
 		return(0);
 	}
+
+	int numberOfHits = getHitCount(area);
+	if (numberOfHits == 0)
+	{
+		PBL_CGI_TRACE("No hits, no duplication");
+
+		fputs("Content-Type: application/json\n\n", stdout);
+		fputs(response, stdout);
+		PBL_CGI_TRACE("No replacement");
+		return(0);
+	}
+
+	int duplicator = getHitDuplicator(area, numberOfHits);
+	if (duplicator <= 1)
+	{
+		PBL_CGI_TRACE("Duplicator value %d, no duplication", duplicator);
+
+		fputs("Content-Type: application/json\n\n", stdout);
+		fputs(response, stdout);
+		PBL_CGI_TRACE("No replacement");
+		return(0);
+	}
+	PBL_CGI_TRACE("Hits %d, Duplicator %d", numberOfHits, duplicator);
 
 	PblStringBuilder * stringBuilder = pblStringBuilderNew();
 	if (!stringBuilder)
@@ -467,10 +857,9 @@ int main(int argc, char * argv[])
 
 	int nPois = pblListSize(list);
 
-	for (int i = 0; i < 2; i++)
+	for (int i = 0; i < duplicator; i++)
 	{
 		int idDifference = i * 1000000;
-		int latDifference = i * 100;
 
 		for (int j = 0; j < nPois; j++)
 		{
@@ -488,19 +877,10 @@ int main(int argc, char * argv[])
 			}
 			else
 			{
-				char * lat = getStringBetween(hotspot, "\"lat\":", ",");
-				PBL_CGI_TRACE("lat=%s", lat);
+				char * replacedLat = changeLat(hotspot, i, 100);
+				char * replacedLon = changeLon(replacedLat, i, 100);
 
-				char * oldLat = pblCgiSprintf("\"lat\":%s,", lat);
-				PBL_CGI_TRACE("oldLat=%s", oldLat);
-
-				char * newLat = pblCgiSprintf("\"lat\":%d,", atoi(lat) + latDifference);
-				PBL_CGI_TRACE("newLat=%s", newLat);
-
-				char * replacedLat = pblCgiStrReplace(hotspot, oldLat, newLat);
-				PBL_CGI_TRACE("replacedLat=%s", replacedLat);
-
-				char * id = getStringBetween(replacedLat, "\"id\":\"", "\"");
+				char * id = getStringBetween(replacedLon, "\"id\":\"", "\"");
 				PBL_CGI_TRACE("id=%s", id);
 
 				char * oldId = pblCgiSprintf("\"id\":\"%s\"", id);
@@ -509,15 +889,13 @@ int main(int argc, char * argv[])
 				char * newId = pblCgiSprintf("\"id\":\"%d\"", atoi(id) + idDifference);
 				PBL_CGI_TRACE("newId=%s", newId);
 
-				char * replacedId = pblCgiStrReplace(replacedLat, oldId, newId);
+				char * replacedId = pblCgiStrReplace(replacedLon, oldId, newId);
 				PBL_CGI_TRACE("replacedId=%s", replacedId);
 
 				putString(replacedId, stringBuilder);
-				
-				PBL_FREE(lat);
-				PBL_FREE(oldLat);
-				PBL_FREE(newLat);
+
 				PBL_FREE(replacedLat);
+				PBL_FREE(replacedLon);
 
 				PBL_FREE(id);
 				PBL_FREE(oldId);
