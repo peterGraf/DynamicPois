@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.7  2018/05/01 00:03:43  peter
+Cleanup
+
 Revision 1.6  2018/04/30 22:29:20  peter
 Improved ht count
 
@@ -43,7 +46,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.6 2018/04/30 22:29:20 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.7 2018/05/01 00:03:43 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -84,13 +87,15 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.6 2018/04/30 22:29:20 peter Ex
 
 #include "pblCgi.h"
 
+/*
+ * Read some bytes from a socket
+ */
 static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * timeout)
 {
 	char * tag = "tcpRead";
 	int    rc = 0;
-
-	int socketError = 0;
-	int optlen = sizeof(socketError);
+	int    socketError = 0;
+	int    optlen = sizeof(socketError);
 
 	errno = 0;
 	if (getsockopt(socket, SOL_SOCKET, SO_ERROR, (char *)&socketError, &optlen))
@@ -144,31 +149,29 @@ static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * t
 			}
 			else if (rc == 0)
 			{
-				return(nBytesRead);
+				return nBytesRead;
 			}
+
 			nBytesRead++;
 			if (*(buffer + nBytesRead - 1) == '\n')
 			{
-				return(nBytesRead);
+				return nBytesRead;
 			}
 
 			if (nBytesRead < (bufferSize - 1))
 			{
 				continue;
 			}
-			return(nBytesRead);
+			return nBytesRead;
 		}
 	}
-	return(nBytesRead);
+	return nBytesRead;
 }
 
 /*
-* httpGet
-*
-* Makes a HTTP request with the given uri to the given host/port
-* and returns the result content in a malloced buffer.
+* Make a HTTP request with the given uri to the given host/port
+* and return the result content in a malloced buffer.
 */
-
 static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 {
 	static char * tag = "httpGet";
@@ -210,17 +213,17 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 	PBL_CGI_TRACE("HttpRequest=%s", sendBuffer);
 
 	int rc = 0;
-	int dataLeft = strlen(sendBuffer);
+	int nBytesToSend = strlen(sendBuffer);
 	char * ptr = sendBuffer;
 
-	while (dataLeft > 0)
+	while (nBytesToSend > 0)
 	{
 		errno = 0;
-		rc = send(socketFd, ptr, dataLeft, 0);
+		rc = send(socketFd, ptr, nBytesToSend, 0);
 		if (rc > 0)
 		{
 			ptr += rc;
-			dataLeft -= rc;
+			nBytesToSend -= rc;
 		}
 		else
 		{
@@ -305,7 +308,7 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 	{
 		ptr += 4;
 	}
-	return(ptr);
+	return ptr;
 }
 
 static char * getMatchingString(char * string, char start, char end, char **nextPtr)
@@ -406,6 +409,7 @@ static char * getArea()
 			PBL_FREE(areaKey);
 			continue;
 		}
+
 		int myLat = (int)(1000000.0 * strtof(pblCgiQueryValue("lat"), NULL));
 		int myLon = (int)(1000000.0 * strtof(pblCgiQueryValue("lon"), NULL));
 
@@ -418,7 +422,6 @@ static char * getArea()
 			PBL_FREE(areaKey);
 			continue;
 		}
-
 		PBL_CGI_TRACE("%s, lat %d, lon %d is inside area value %s", areaKey, myLat, myLon, areaValue);
 
 		strListFree(locationList);
@@ -452,7 +455,7 @@ static int getHitCount(char * area)
 	{
 		PBL_CGI_TRACE("Bad value for HitDuration %d", hitDuration);
 	}
-	PBL_CGI_TRACE("HitDuration is %d", hitDuration);
+	//PBL_CGI_TRACE("HitDuration is %d", hitDuration);
 
 	char * timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL), "%02d%02d%02d-%02d%02d%02d");
 
@@ -462,11 +465,10 @@ static int getHitCount(char * area)
 		PBL_CGI_TRACE("No value for HitDirectory");
 		return 0;
 	}
-	PBL_CGI_TRACE("HitDirectory %s", hitDirectory);
+	//PBL_CGI_TRACE("HitDirectory %s", hitDirectory);
 
 	char * hitFileName = pblCgiSprintf("%s_%s.txt", area, timeString);
 	char * hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, hitFileName);
-
 	PBL_CGI_TRACE("HitFilePath %s", hitFilePath);
 
 	FILE * hitFile = pblCgiFopen(hitFilePath, "a+");
@@ -496,11 +498,8 @@ static int getHitCount(char * area)
 	HANDLE hFind;
 	WIN32_FIND_DATA FindData;
 
-	// Find the first file
-
 	char * pattern = pblCgiSprintf("%s/%s*.*", hitDirectory, area);
-
-	PBL_CGI_TRACE("FindFirstFile %s", pattern);
+	// PBL_CGI_TRACE("FindFirstFile %s", pattern);
 
 	size_t size = strlen(pattern) + 1;
 	wchar_t * wFilePattern = pbl_malloc0(tag, sizeof(wchar_t) * size);
@@ -569,7 +568,7 @@ static int getHitCount(char * area)
 	return hitCount;
 }
 
-static int getHitDuplicator(char * area, int hitCount)
+static int getDuplicator(char * area, int hitCount)
 {
 	char * hitCountLevelsString = areaConfigValue(area, "HitCountLevels");
 	char * hitDuplicatorsString = areaConfigValue(area, "HitDuplicators");
@@ -578,7 +577,7 @@ static int getHitDuplicator(char * area, int hitCount)
 	int levelSize = pblListSize(hitCountLevelsList);
 	if (levelSize < 1)
 	{
-		PBL_CGI_TRACE("%s, at least one value for HitCountLevels, value '%s'", area, hitCountLevelsString);
+		PBL_CGI_TRACE("%s, expecting at least one value for HitCountLevels, value '%s'", area, hitCountLevelsString);
 
 		strListFree(hitCountLevelsList);
 		return 0;
@@ -588,7 +587,7 @@ static int getHitDuplicator(char * area, int hitCount)
 	int duplicatorSize = pblListSize(hitDuplicatorsList);
 	if (duplicatorSize < 1)
 	{
-		PBL_CGI_TRACE("%s, at least one value for HitDuplicators, value '%s'", area, hitDuplicatorsString);
+		PBL_CGI_TRACE("%s, expecting at least one value for HitDuplicators, value '%s'", area, hitDuplicatorsString);
 
 		strListFree(hitCountLevelsList);
 		strListFree(hitDuplicatorsList);
@@ -643,13 +642,13 @@ static char * changeLat(char * string, int i, int difference)
 	}
 
 	char * lat = getStringBetween(string, "\"lat\":", ",");
-	PBL_CGI_TRACE("lat=%s", lat);
+	//PBL_CGI_TRACE("lat=%s", lat);
 
 	char * oldLat = pblCgiSprintf("\"lat\":%s,", lat);
-	PBL_CGI_TRACE("oldLat=%s", oldLat);
+	//PBL_CGI_TRACE("oldLat=%s", oldLat);
 
 	char * newLat = pblCgiSprintf("\"lat\":%d,", atoi(lat) + difference);
-	PBL_CGI_TRACE("newLat=%s", newLat);
+	//PBL_CGI_TRACE("newLat=%s", newLat);
 
 	char * replacedLat = pblCgiStrReplace(string, oldLat, newLat);
 
@@ -676,13 +675,13 @@ static char * changeLon(char * string, int i, int difference)
 			difference *= -factor;
 		}
 		char * lon = getStringBetween(string, "\"lon\":", ",");
-		PBL_CGI_TRACE("lon=%s", lon);
+		//PBL_CGI_TRACE("lon=%s", lon);
 
 		char * oldLon = pblCgiSprintf("\"lon\":%s,", lon);
-		PBL_CGI_TRACE("oldLon=%s", oldLon);
+		//PBL_CGI_TRACE("oldLon=%s", oldLon);
 
 		char * newLon = pblCgiSprintf("\"lon\":%d,", atoi(lon) + difference);
-		PBL_CGI_TRACE("newLon=%s", newLon);
+		//PBL_CGI_TRACE("newLon=%s", newLon);
 
 		char * replacedLon = pblCgiStrReplace(string, oldLon, newLon);
 
@@ -695,9 +694,18 @@ static char * changeLon(char * string, int i, int difference)
 	return pblCgiStrDup(string);
 }
 
-// Main
-//
-int main(int argc, char * argv[])
+static void traceDuration()
+{
+	struct timeval now;
+	gettimeofday(&now, NULL);
+
+	unsigned long duration = now.tv_sec * 1000000 + now.tv_usec;
+	duration -= pblCgiStartTime.tv_sec * 1000000 + pblCgiStartTime.tv_usec;
+	char * string = pblCgiSprintf("%lu", duration);
+	PBL_CGI_TRACE("Duration=%s microseconds", string);
+}
+
+static int dynamicPois(int argc, char * argv[])
 {
 	char * tag = "DynamicPois";
 
@@ -716,13 +724,13 @@ int main(int argc, char * argv[])
 	{
 		pblCgiExitOnError("%s: HostName must be given.\n", tag);
 	}
-	PBL_CGI_TRACE("HostName=%s", hostName);
+	//PBL_CGI_TRACE("HostName=%s", hostName);
 
 	int port = 80;
 	char * portString = pblCgiConfigValue("Port", "80");
 	if (!pblCgiStrIsNullOrWhiteSpace(portString))
 	{
-		PBL_CGI_TRACE("Port=%s", portString);
+		//PBL_CGI_TRACE("Port=%s", portString);
 		int givenPort = atoi(portString);
 		if (givenPort < 1)
 		{
@@ -736,10 +744,10 @@ int main(int argc, char * argv[])
 	{
 		pblCgiExitOnError("%s: BaseUri must be given.\n", tag);
 	}
-	PBL_CGI_TRACE("BaseUri=%s", baseUri);
+	//PBL_CGI_TRACE("BaseUri=%s", baseUri);
 
 	char * uri = pblCgiSprintf("%s?%s", baseUri, pblCgiQueryString);
-	PBL_CGI_TRACE("Uri=%s", uri);
+	//PBL_CGI_TRACE("Uri=%s", uri);
 
 #ifdef _WIN32
 
@@ -750,7 +758,7 @@ int main(int argc, char * argv[])
 	{
 		pblCgiExitOnError("%s: WSAStartup failed: %d\n", tag, result);
 	}
-	PBL_CGI_TRACE("WSAStartup=ok");
+	//PBL_CGI_TRACE("WSAStartup=ok");
 
 #endif
 
@@ -763,8 +771,8 @@ int main(int argc, char * argv[])
 	{
 		fputs("Content-Type: application/json\n\n", stdout);
 		fputs(response, stdout);
-		PBL_CGI_TRACE("Not in any area");
-		return(0);
+		PBL_CGI_TRACE("Not in any area, no duplication");
+		return 0;
 	}
 
 	char * start = "{\"hotspots\":";
@@ -774,30 +782,28 @@ int main(int argc, char * argv[])
 	{
 		fputs("Content-Type: application/json\n\n", stdout);
 		fputs(response, stdout);
-		PBL_CGI_TRACE("No replacement");
-		return(0);
+		PBL_CGI_TRACE("Response does not start with %s, no duplication", start);
+		return 0;
 	}
 
 	int numberOfHits = getHitCount(area);
 	if (numberOfHits == 0)
 	{
-		PBL_CGI_TRACE("No hits, no duplication");
+		PBL_CGI_TRACE("Hits 0, no duplication");
 
 		fputs("Content-Type: application/json\n\n", stdout);
 		fputs(response, stdout);
-		PBL_CGI_TRACE("No replacement");
-		return(0);
+		return 0;
 	}
 
-	int duplicator = getHitDuplicator(area, numberOfHits);
+	int duplicator = getDuplicator(area, numberOfHits);
 	if (duplicator <= 1)
 	{
-		PBL_CGI_TRACE("Duplicator value %d, no duplication", duplicator);
+		PBL_CGI_TRACE("Hits %d, Duplicator %d, no duplication", numberOfHits, duplicator);
 
 		fputs("Content-Type: application/json\n\n", stdout);
 		fputs(response, stdout);
-		PBL_CGI_TRACE("No replacement");
-		return(0);
+		return 0;
 	}
 	PBL_CGI_TRACE("Hits %d, Duplicator %d", numberOfHits, duplicator);
 
@@ -810,8 +816,8 @@ int main(int argc, char * argv[])
 	char * rest = NULL;
 	char * hotspotsString = getMatchingString(response + length, '[', ']', &rest);
 
-	PBL_CGI_TRACE("hotspotsString=%s", hotspotsString);
-	PBL_CGI_TRACE("rest=%s", rest);
+	//PBL_CGI_TRACE("hotspotsString=%s", hotspotsString);
+	//PBL_CGI_TRACE("rest=%s", rest);
 
 	PblList * list = pblListNewArrayList();
 	if (!list)
@@ -858,7 +864,7 @@ int main(int argc, char * argv[])
 			if (i == 0)
 			{
 				putString(hotspot, stringBuilder);
-				PBL_CGI_TRACE("hotspot=%s", hotspot);
+				//PBL_CGI_TRACE("hotspot=%s", hotspot);
 			}
 			else
 			{
@@ -866,16 +872,16 @@ int main(int argc, char * argv[])
 				char * replacedLon = changeLon(replacedLat, i, 100);
 
 				char * id = getStringBetween(replacedLon, "\"id\":\"", "\"");
-				PBL_CGI_TRACE("id=%s", id);
+				//PBL_CGI_TRACE("id=%s", id);
 
 				char * oldId = pblCgiSprintf("\"id\":\"%s\"", id);
-				PBL_CGI_TRACE("oldId=%s", oldId);
+				//PBL_CGI_TRACE("oldId=%s", oldId);
 
 				char * newId = pblCgiSprintf("\"id\":\"%d\"", atoi(id) + idDifference);
-				PBL_CGI_TRACE("newId=%s", newId);
+				//PBL_CGI_TRACE("newId=%s", newId);
 
 				char * replacedId = pblCgiStrReplace(replacedLon, oldId, newId);
-				PBL_CGI_TRACE("replacedId=%s", replacedId);
+				//PBL_CGI_TRACE("replacedId=%s", replacedId);
 
 				putString(replacedId, stringBuilder);
 
@@ -892,9 +898,15 @@ int main(int argc, char * argv[])
 	}
 	putString("]", stringBuilder);
 	putString(rest, stringBuilder);
-
 	PBL_CGI_TRACE("output=%s", pblStringBuilderToString(stringBuilder));
 	pblStringBuilderFree(stringBuilder);
 
 	return 0;
+}
+
+int main(int argc, char * argv[])
+{
+	int rc = dynamicPois(argc, argv);
+	traceDuration();
+	return rc;
 }
