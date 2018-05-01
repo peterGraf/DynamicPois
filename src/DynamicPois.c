@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.9  2018/05/01 12:19:09  peter
+Cleanup after Linux port
+
 Revision 1.8  2018/05/01 11:46:36  peter
 Added relativeAlt handling
 
@@ -49,7 +52,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.8 2018/05/01 11:46:36 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.9 2018/05/01 12:19:09 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -765,6 +768,7 @@ static char * changeRelativeAlt(char * string, int index)
 	char * tag = "changeRelativeAlt";
 	if (!strstr(string, "\"relativeAlt\":"))
 	{
+		//PBL_CGI_TRACE("No relativeAlt in %s", string);
 		return pblCgiStrDup(string);
 	}
 	if (!relativeAltList)
@@ -782,6 +786,10 @@ static char * changeRelativeAlt(char * string, int index)
 			return pblCgiStrDup(string);
 		}
 		relativeAltList = pblCgiStrSplitToList(relativeAltValue, ",");
+		if (pblListIsEmpty(relativeAltList))
+		{
+			PBL_CGI_TRACE("RelativeAltList is empty");
+		}
 	}
 	if (pblListIsEmpty(relativeAltList))
 	{
@@ -862,6 +870,7 @@ static int dynamicPois(int argc, char * argv[])
 
 	char * traceFile = pblCgiConfigValue(PBL_CGI_TRACE_FILE, "");
 	pblCgiInitTrace(&startTime, traceFile);
+	PBL_CGI_TRACE("argc %d argv[0] = %s", argc, argv[0]);
 
 	pblCgiParseQuery(argc, argv);
 
@@ -1027,7 +1036,7 @@ static int dynamicPois(int argc, char * argv[])
 				char * newId = pblCgiSprintf("\"id\":\"%d\"", atoi(id) + idDifference);
 				//PBL_CGI_TRACE("newId=%s", newId);
 
-				char * replacedId = pblCgiStrReplace(replacedLon, oldId, newId);
+				char * replacedId = pblCgiStrReplace(replacedRelativeAlt, oldId, newId);
 				//PBL_CGI_TRACE("replacedId=%s", replacedId);
 
 				putString(replacedId, stringBuilder);
