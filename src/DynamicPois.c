@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.8  2018/05/01 11:46:36  peter
+Added relativeAlt handling
+
 Revision 1.7  2018/05/01 00:03:43  peter
 Cleanup
 
@@ -46,7 +49,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.7 2018/05/01 00:03:43 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.8 2018/05/01 11:46:36 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -90,9 +93,9 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.7 2018/05/01 00:03:43 peter Ex
 /*
  * Read some bytes from a socket
  */
-static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * timeout)
+static int readTcp(int socket, char * buffer, int bufferSize, struct timeval * timeout)
 {
-	char * tag = "tcpRead";
+	char * tag = "readTcp";
 	int    rc = 0;
 	int    socketError = 0;
 	int    optlen = sizeof(socketError);
@@ -172,9 +175,9 @@ static int tcpRead(int socket, char * buffer, int bufferSize, struct timeval * t
 * Make a HTTP request with the given uri to the given host/port
 * and return the result content in a malloced buffer.
 */
-static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
+static char * getHttpResponse(char * hostname, int port, char * uri, int timeoutSeconds)
 {
-	static char * tag = "httpGet";
+	static char * tag = "getHttpResponse";
 
 	errno = 0;
 	struct hostent * hostInfo = gethostbyname(hostname);
@@ -245,7 +248,7 @@ static char * httpGet(char * hostname, int port, char * uri, int timeoutSeconds)
 	char buffer[64 * 1024 + 1];
 	for (;;)
 	{
-		rc = tcpRead(socketFd, buffer, sizeof(buffer) - 1, &timeoutValue);
+		rc = readTcp(socketFd, buffer, sizeof(buffer) - 1, &timeoutValue);
 		if (rc < 0)
 		{
 			pblCgiExitOnError("%s: read failed! rc %d\n", tag, rc);
@@ -362,6 +365,33 @@ static char * getStringBetween(char * string, char * start, char * end)
 	return pblCgiStrRangeDup(ptr, ptr2);
 }
 
+static char * getNumberString(char * string, char * start)
+{
+	char * tag = "getNumberString";
+	char * ptr = strstr(string, start);
+	if (!ptr)
+	{
+		pblCgiExitOnError("%s: expected starting '%s' in string '%s'\n", tag, start, string);
+	}
+	ptr += strlen(start);
+
+	char * ptr2 = ptr;
+	while (*ptr2)
+	{
+		if (isdigit(*ptr2) || '.' == *ptr2 || '-' == *ptr2 || '+' == *ptr2)
+		{
+			ptr2++;
+			continue;
+		}
+		break;
+	}
+	if (!ptr2)
+	{
+		pblCgiExitOnError("%s: expected number ending in string '%s'\n", tag, ptr);
+	}
+	return pblCgiStrRangeDup(ptr, ptr2);
+}
+
 static void putString(char * string, PblStringBuilder * stringBuilder)
 {
 	char * tag = "putString";
@@ -373,15 +403,12 @@ static void putString(char * string, PblStringBuilder * stringBuilder)
 	fputs(string, stdout);
 }
 
-static int strListElementFree(void * context, int index, void * element)
+static void freeStringList(PblList * list)
 {
-	PBL_FREE(element);
-	return 0;
-}
-
-static void strListFree(PblList * list)
-{
-	pblCollectionAggregate(list, NULL, strListElementFree);
+	while (!pblListIsEmpty(list))
+	{
+		free(pblListPop(list));
+	}
 	pblListFree(list);
 }
 
@@ -405,7 +432,7 @@ static char * getArea()
 		{
 			PBL_CGI_TRACE("%s, expecting 4 location values, current value is %s", areaKey, areaValue);
 
-			strListFree(locationList);
+			freeStringList(locationList);
 			PBL_FREE(areaKey);
 			continue;
 		}
@@ -418,19 +445,19 @@ static char * getArea()
 		{
 			PBL_CGI_TRACE("%s, lat %d, lon %d is outside area value %s", areaKey, myLat, myLon, areaValue);
 
-			strListFree(locationList);
+			freeStringList(locationList);
 			PBL_FREE(areaKey);
 			continue;
 		}
 		PBL_CGI_TRACE("%s, lat %d, lon %d is inside area value %s", areaKey, myLat, myLon, areaValue);
 
-		strListFree(locationList);
+		freeStringList(locationList);
 		return areaKey;
 	}
 	return NULL;
 }
 
-static char * areaConfigValue(char * area, char *configKey)
+static char * getAreaConfigValue(char * area, char *configKey)
 {
 	char * key = pblCgiSprintf("%s_%s", area, configKey);
 	char * valueString = pblCgiConfigValue(key, "");
@@ -449,7 +476,7 @@ static char * areaConfigValue(char * area, char *configKey)
 
 static int getHitCount(char * area)
 {
-	char * hitDurationString = areaConfigValue(area, "HitDuration");
+	char * hitDurationString = getAreaConfigValue(area, "HitDuration");
 	int hitDuration = atoi(hitDurationString);
 	if (hitDuration < 1)
 	{
@@ -522,6 +549,27 @@ static int getHitCount(char * area)
 	{
 		if (wcscmp(wHitFileName, FindData.cFileName) > 0)
 		{
+			PBL_FREE(hitFilePath);
+			char buffer[PBL_CGI_MAX_LINE_LENGTH];
+			int size = 0;
+			while (FindData.cFileName[size])
+			{
+				if (size < sizeof(buffer) - 1)
+				{
+					buffer[size] = (char)FindData.cFileName[size];
+					size++;
+				}
+				else
+				{
+					break;
+				}
+			}
+			buffer[size] = '\0';
+			hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, buffer);
+			if (remove(hitFilePath))
+			{
+				PBL_CGI_TRACE("Error deleting file %s, %d", hitFilePath, errno);
+			}
 			continue;
 		}
 		hitCount++;
@@ -553,6 +601,12 @@ static int getHitCount(char * area)
 
 		if (strcmp(hitFileName, entry->d_name) > 0)
 		{
+			PBL_FREE(hitFilePath);
+			hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, entry->d_name);
+			if (remove(hitFilePath))
+			{
+				PBL_CGI_TRACE("Error deleting file %s, %d", hitFilePath, errno);
+			}
 			continue;
 		}
 		hitCount++;
@@ -570,8 +624,8 @@ static int getHitCount(char * area)
 
 static int getDuplicator(char * area, int hitCount)
 {
-	char * hitCountLevelsString = areaConfigValue(area, "HitCountLevels");
-	char * hitDuplicatorsString = areaConfigValue(area, "HitDuplicators");
+	char * hitCountLevelsString = getAreaConfigValue(area, "HitCountLevels");
+	char * hitDuplicatorsString = getAreaConfigValue(area, "HitDuplicators");
 
 	PblList * hitCountLevelsList = pblCgiStrSplitToList(hitCountLevelsString, ",");
 	int levelSize = pblListSize(hitCountLevelsList);
@@ -579,7 +633,7 @@ static int getDuplicator(char * area, int hitCount)
 	{
 		PBL_CGI_TRACE("%s, expecting at least one value for HitCountLevels, value '%s'", area, hitCountLevelsString);
 
-		strListFree(hitCountLevelsList);
+		freeStringList(hitCountLevelsList);
 		return 0;
 	}
 
@@ -589,8 +643,8 @@ static int getDuplicator(char * area, int hitCount)
 	{
 		PBL_CGI_TRACE("%s, expecting at least one value for HitDuplicators, value '%s'", area, hitDuplicatorsString);
 
-		strListFree(hitCountLevelsList);
-		strListFree(hitDuplicatorsList);
+		freeStringList(hitCountLevelsList);
+		freeStringList(hitDuplicatorsList);
 		return 0;
 	}
 
@@ -608,20 +662,25 @@ static int getDuplicator(char * area, int hitCount)
 			{
 				rc = atoi(pblListGet(hitDuplicatorsList, duplicatorSize - 1));
 			}
-			strListFree(hitCountLevelsList);
-			strListFree(hitDuplicatorsList);
+			freeStringList(hitCountLevelsList);
+			freeStringList(hitDuplicatorsList);
 			return rc;
 		}
 	}
 
 	int rc = atoi(pblListGet(hitDuplicatorsList, duplicatorSize - 1));
-	strListFree(hitCountLevelsList);
-	strListFree(hitDuplicatorsList);
+	freeStringList(hitCountLevelsList);
+	freeStringList(hitDuplicatorsList);
 	return rc;
 }
 
 static char * changeLat(char * string, int i, int difference)
 {
+	if (!strstr(string, "\"lat\":"))
+	{
+		return pblCgiStrDup(string);
+	}
+
 	int factor = 1 + (i - 1) / 8;
 	int modulo = (i - 1) % 8;
 
@@ -641,7 +700,7 @@ static char * changeLat(char * string, int i, int difference)
 		return pblCgiStrDup(string);
 	}
 
-	char * lat = getStringBetween(string, "\"lat\":", ",");
+	char * lat = getNumberString(string, "\"lat\":");
 	//PBL_CGI_TRACE("lat=%s", lat);
 
 	char * oldLat = pblCgiSprintf("\"lat\":%s,", lat);
@@ -661,6 +720,11 @@ static char * changeLat(char * string, int i, int difference)
 
 static char * changeLon(char * string, int i, int difference)
 {
+	if (!strstr(string, "\"lon\":"))
+	{
+		return pblCgiStrDup(string);
+	}
+
 	int factor = 1 + (i - 1) / 8;
 	int modulo = (i - 1) % 8;
 
@@ -674,7 +738,7 @@ static char * changeLon(char * string, int i, int difference)
 		{
 			difference *= -factor;
 		}
-		char * lon = getStringBetween(string, "\"lon\":", ",");
+		char * lon = getNumberString(string, "\"lon\":");
 		//PBL_CGI_TRACE("lon=%s", lon);
 
 		char * oldLon = pblCgiSprintf("\"lon\":%s,", lon);
@@ -691,6 +755,88 @@ static char * changeLon(char * string, int i, int difference)
 
 		return replacedLon;
 	}
+	return pblCgiStrDup(string);
+}
+
+static PblList * relativeAltList = NULL;
+
+static char * changeRelativeAlt(char * string, int index)
+{
+	char * tag = "changeRelativeAlt";
+	if (!strstr(string, "\"relativeAlt\":"))
+	{
+		return pblCgiStrDup(string);
+	}
+	if (!relativeAltList)
+	{
+		char * relativeAltValue = pblCgiConfigValue("RelativeAlt", NULL);
+		if (pblCgiStrIsNullOrWhiteSpace(relativeAltValue))
+		{
+			PBL_CGI_TRACE("No config value for RelativeAlt");
+
+			relativeAltList = pblListNewArrayList();
+			if (!relativeAltList)
+			{
+				pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+			}
+			return pblCgiStrDup(string);
+		}
+		relativeAltList = pblCgiStrSplitToList(relativeAltValue, ",");
+	}
+	if (pblListIsEmpty(relativeAltList))
+	{
+		return pblCgiStrDup(string);
+	}
+
+	char * full = getStringBetween(string, "\"full\":\"", "\"");
+	if (pblCgiStrIsNullOrWhiteSpace(full))
+	{
+		PBL_CGI_TRACE("No value for full in %s", string);
+		return pblCgiStrDup(string);
+	}
+
+	int listSize = pblListSize(relativeAltList);
+
+	float value = -1000000.0;
+	for (int i = 0; i < listSize - 1; i += 2)
+	{
+		char * l3dName = pblListGet(relativeAltList, i);
+		char * valueStr = pblListGet(relativeAltList, i + 1);
+
+		if (pblCgiStrEquals(l3dName, full))
+		{
+			value = strtof(valueStr, NULL);
+			break;
+		}
+	}
+	PBL_FREE(full);
+
+	if (value != -1000000.0)
+	{
+		double factor = (index + 1) / 2;
+		if (!(index % 2))
+		{
+			factor = -factor;
+		}
+
+		char * relativeAltStr = getNumberString(string, "\"relativeAlt\":");
+		double relativeAltValue = strtof(relativeAltStr, NULL);
+
+		char * oldRelativeAlt = pblCgiSprintf("\"relativeAlt\":%s,", relativeAltStr);
+		//PBL_CGI_TRACE("oldRelativeAlt=%s", oldRelativeAlt);
+
+		char * newRelativeAlt = pblCgiSprintf("\"relativeAlt\":%f,", relativeAltValue + factor * value);
+		//PBL_CGI_TRACE("newRelativeAlt=%s", newRelativeAlt);
+
+		char * replacedRelativeAlt = pblCgiStrReplace(string, oldRelativeAlt, newRelativeAlt);
+
+		PBL_FREE(relativeAltStr);
+		PBL_FREE(oldRelativeAlt);
+		PBL_FREE(newRelativeAlt);
+		
+		return replacedRelativeAlt;
+	}
+
 	return pblCgiStrDup(string);
 }
 
@@ -762,7 +908,7 @@ static int dynamicPois(int argc, char * argv[])
 
 #endif
 
-	char * response = httpGet(hostName, port, uri, 16);
+	char * response = getHttpResponse(hostName, port, uri, 16);
 
 	PBL_CGI_TRACE("Response=%s", response);
 
@@ -870,8 +1016,9 @@ static int dynamicPois(int argc, char * argv[])
 			{
 				char * replacedLat = changeLat(hotspot, i, 100);
 				char * replacedLon = changeLon(replacedLat, i, 100);
+				char * replacedRelativeAlt = changeRelativeAlt(replacedLon, i);
 
-				char * id = getStringBetween(replacedLon, "\"id\":\"", "\"");
+				char * id = getStringBetween(replacedRelativeAlt, "\"id\":\"", "\"");
 				//PBL_CGI_TRACE("id=%s", id);
 
 				char * oldId = pblCgiSprintf("\"id\":\"%s\"", id);
@@ -887,6 +1034,7 @@ static int dynamicPois(int argc, char * argv[])
 
 				PBL_FREE(replacedLat);
 				PBL_FREE(replacedLon);
+				PBL_FREE(replacedRelativeAlt);
 
 				PBL_FREE(id);
 				PBL_FREE(oldId);

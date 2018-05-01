@@ -34,6 +34,8 @@ Area_1_HitDuration             1200
 Area_1_HitCountLevels          3, 5, 7, 10, 20
 Area_1_HitDuplicators          1, 2, 6, 10, 15, 20
 
+RelativeAlt             ag_alexaCollosus_Oval_2.l3d, 0.1, ag_alexaCollosus_Planar_2.l3d, 0.1
+
 # Traces are only written if the file exists, the file needs to be writable by the cgi program
 #
 TraceFilePath           D:/temp/dynamicPoisTrace.txt
