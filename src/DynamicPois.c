@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.10  2018/05/02 21:56:01  peter
+Improved lat, lon handling after code review
+
 Revision 1.9  2018/05/01 12:19:09  peter
 Cleanup after Linux port
 
@@ -52,7 +55,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.9 2018/05/01 12:19:09 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.10 2018/05/02 21:56:01 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -415,7 +418,7 @@ static void freeStringList(PblList * list)
 	pblListFree(list);
 }
 
-static char * getArea()
+static char * getArea(int lat, int lon)
 {
 	for (int i = 1; i <= 1000; i++)
 	{
@@ -440,19 +443,16 @@ static char * getArea()
 			continue;
 		}
 
-		int myLat = (int)(1000000.0 * strtof(pblCgiQueryValue("lat"), NULL));
-		int myLon = (int)(1000000.0 * strtof(pblCgiQueryValue("lon"), NULL));
-
-		if (myLat < atoi(pblListGet(locationList, 0)) || myLon < atoi(pblListGet(locationList, 1))
-			|| myLat > atoi(pblListGet(locationList, 2)) || myLon > atoi(pblListGet(locationList, 3)))
+		if (lat < atoi(pblListGet(locationList, 0)) || lon < atoi(pblListGet(locationList, 1))
+			|| lat > atoi(pblListGet(locationList, 2)) || lon > atoi(pblListGet(locationList, 3)))
 		{
-			PBL_CGI_TRACE("%s, lat %d, lon %d is outside area value %s", areaKey, myLat, myLon, areaValue);
+			PBL_CGI_TRACE("%s, lat %d, lon %d is outside area value %s", areaKey, lat, lon, areaValue);
 
 			freeStringList(locationList);
 			PBL_FREE(areaKey);
 			continue;
 		}
-		PBL_CGI_TRACE("%s, lat %d, lon %d is inside area value %s", areaKey, myLat, myLon, areaValue);
+		PBL_CGI_TRACE("%s, lat %d, lon %d is inside area value %s", areaKey, lat, lon, areaValue);
 
 		freeStringList(locationList);
 		return areaKey;
@@ -841,7 +841,7 @@ static char * changeRelativeAlt(char * string, int index)
 		PBL_FREE(relativeAltStr);
 		PBL_FREE(oldRelativeAlt);
 		PBL_FREE(newRelativeAlt);
-		
+
 		return replacedRelativeAlt;
 	}
 
@@ -921,7 +921,35 @@ static int dynamicPois(int argc, char * argv[])
 
 	PBL_CGI_TRACE("Response=%s", response);
 
-	char * area = getArea();
+	char * latString = pblCgiQueryValue("lat");
+	if (pblCgiStrIsNullOrWhiteSpace(latString))
+	{
+		pblCgiExitOnError("%s: lat needs be given as float in query, got '%s'\n", tag, latString);
+	}
+
+	errno = 0;
+	float latFloat = strtof(latString, NULL);
+	if (latFloat == 0 && errno != 0)
+	{
+		pblCgiExitOnError("%s: lat needs be given as float in query, got '%s', errno %d\n", tag, latString, errno);
+	}
+	int latInt = (int)(1000000.0 * latFloat);
+
+	char * lonString = pblCgiQueryValue("lon");
+	if (pblCgiStrIsNullOrWhiteSpace(lonString))
+	{
+		pblCgiExitOnError("%s: lon needs be given as float in query, got '%s'\n", tag, lonString);
+	}
+
+	errno = 0;
+	float lonFloat = strtof(lonString, NULL);
+	if (lonFloat == 0 && errno != 0)
+	{
+		pblCgiExitOnError("%s: lon needs be given as float in query, got '%s', errno %d\n", tag, lonString, errno);
+	}
+	int lonInt = (int)(1000000.0 * lonFloat);
+
+	char * area = getArea(latInt, lonInt);
 	if (area == NULL)
 	{
 		fputs("Content-Type: application/json\n\n", stdout);
