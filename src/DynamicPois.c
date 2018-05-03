@@ -97,9 +97,9 @@ char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.10 2018/05/02 21:56:01 peter E
 #include "pblCgi.h"
 
 /*
- * Read some bytes from a socket
+ * Receive some bytes from a socket
  */
-static int readTcp(int socket, char * buffer, int bufferSize, struct timeval * timeout)
+static int receiveBytesFromTcp(int socket, char * buffer, int bufferSize, struct timeval * timeout)
 {
 	char * tag = "readTcp";
 	int    rc = 0;
@@ -147,7 +147,7 @@ static int readTcp(int socket, char * buffer, int bufferSize, struct timeval * t
 			}
 
 			errno = 0;
-			rc = recvfrom(socket, buffer + nBytesRead, 1, 0, NULL, NULL);
+			rc = recvfrom(socket, buffer + nBytesRead, bufferSize - nBytesRead, 0, NULL, NULL);
 			if (rc < 0)
 			{
 				if (errno == EINTR)
@@ -160,28 +160,110 @@ static int readTcp(int socket, char * buffer, int bufferSize, struct timeval * t
 			{
 				return nBytesRead;
 			}
-
-			nBytesRead++;
-			if (*(buffer + nBytesRead - 1) == '\n')
-			{
-				return nBytesRead;
-			}
-
-			if (nBytesRead < (bufferSize - 1))
-			{
-				continue;
-			}
-			return nBytesRead;
+			nBytesRead += rc;
 		}
 	}
 	return nBytesRead;
 }
 
 /*
-* Make a HTTP request with the given uri to the given host/port
-* and return the result content in a malloced buffer.
+* Receive some string bytes and return the result in a malloced buffer.
 */
-static char * getHttpResponse(char * hostname, int port, char * uri, int timeoutSeconds)
+static char * receiveStringFromTcp(int socket, int timeoutSeconds)
+{
+	static char * tag = "receiveStringFromTcp";
+
+	char * result = NULL;
+	PblStringBuilder * stringBuilder = NULL;
+	
+	struct timeval timeoutValue;
+	timeoutValue.tv_sec = timeoutSeconds;
+	timeoutValue.tv_usec = 0;
+
+	char buffer[64 * 1024];
+	buffer[0] = '\0';
+
+	for (;;)
+	{
+		int rc = receiveBytesFromTcp(socket, buffer, sizeof(buffer) - 1, &timeoutValue);
+		if (rc < 0)
+		{
+			pblCgiExitOnError("%s: readTcp failed! rc %d\n", tag, rc);
+		}
+		else if (rc == 0)
+		{
+			break;
+		}
+		buffer[rc] = '\0';
+
+		if (rc < sizeof(buffer) - 1 && stringBuilder == NULL)
+		{
+			result = pblCgiStrDup(buffer);
+			break;
+		}
+
+		if (stringBuilder == NULL)
+		{
+			PblStringBuilder * stringBuilder = pblStringBuilderNew();
+			if (!stringBuilder)
+			{
+				pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+			}
+		}
+		if (pblStringBuilderAppendStr(stringBuilder, buffer) == ((size_t)-1))
+		{
+			pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+		}
+	}
+
+	if (result == NULL)
+	{
+		if (stringBuilder == NULL)
+		{
+			pblCgiExitOnError("%s: socket %d received 0 bytes as response\n", tag, socket);
+		}
+
+		char * result = pblStringBuilderToString(stringBuilder);
+		if (!result)
+		{
+			pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
+		}
+	}
+	if (stringBuilder)
+	{
+		pblStringBuilderFree(stringBuilder);
+	}
+	return result;
+}
+
+/*
+* Send some bytes to a tcp socket
+*/
+static void sendBytesToTcp(int socket, char * buffer, int nBytesToSend)
+{
+	static char * tag = "sendBytesToTcp";
+
+	char * ptr = buffer;
+	while (nBytesToSend > 0)
+	{
+		errno = 0;
+		int rc = send(socket, ptr, nBytesToSend, 0);
+		if (rc > 0)
+		{
+			ptr += rc;
+			nBytesToSend -= rc;
+		}
+		else
+		{
+			pblCgiExitOnError("%s: send(%d) error, rc %d, errno %d\n", tag, socket, rc, errno);
+		}
+	}
+}
+
+/*
+* Connect ot a tcp socket on machine with hostname and port
+*/
+static int connectToTcp(char * hostname, int port)
 {
 	static char * tag = "getHttpResponse";
 
@@ -217,71 +299,32 @@ static char * getHttpResponse(char * hostname, int port, char * uri, int timeout
 		pblCgiExitOnError("%s: connect(%d) error, host '%s' on port %d, errno %d\n", tag, socketFd, hostname, shortPort, errno);
 		socket_close(socketFd);
 	}
+	return socketFd;
+}
+
+/*
+* Make a HTTP request with the given uri to the given host/port
+* and return the result content in a malloced buffer.
+*/
+static char * getHttpResponse(char * hostname, int port, char * uri, int timeoutSeconds)
+{
+	static char * tag = "getHttpResponse";
+
+	int socketFd = connectToTcp(hostname, port);
 
 	char * sendBuffer = pblCgiSprintf("GET %s HTTP/1.0\r\nUser-Agent: DynamicPois\r\n\r\n", uri);
 	PBL_CGI_TRACE("HttpRequest=%s", sendBuffer);
 
-	int rc = 0;
-	int nBytesToSend = strlen(sendBuffer);
-	char * ptr = sendBuffer;
-
-	while (nBytesToSend > 0)
-	{
-		errno = 0;
-		rc = send(socketFd, ptr, nBytesToSend, 0);
-		if (rc > 0)
-		{
-			ptr += rc;
-			nBytesToSend -= rc;
-		}
-		else
-		{
-			pblCgiExitOnError("%s: send(%d) error, rc %d, errno %d\n", tag, socketFd, rc, errno);
-		}
-	}
+	sendBytesToTcp(socketFd, sendBuffer, strlen(sendBuffer));
 	PBL_FREE(sendBuffer);
 
-	PblStringBuilder * stringBuilder = pblStringBuilderNew();
-	if (!stringBuilder)
-	{
-		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
-	}
-
-	struct timeval timeoutValue;
-	timeoutValue.tv_sec = timeoutSeconds;
-	timeoutValue.tv_usec = 0;
-
-	char buffer[64 * 1024 + 1];
-	for (;;)
-	{
-		rc = readTcp(socketFd, buffer, sizeof(buffer) - 1, &timeoutValue);
-		if (rc < 0)
-		{
-			pblCgiExitOnError("%s: read failed! rc %d\n", tag, rc);
-		}
-		else if (rc == 0)
-		{
-			break;
-		}
-		buffer[rc] = '\0';
-		if (pblStringBuilderAppendStr(stringBuilder, buffer) == ((size_t)-1))
-		{
-			pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
-		}
-	}
+	char * result = receiveStringFromTcp(socketFd, timeoutSeconds);
 	socket_close(socketFd);
-
-	char * result = pblStringBuilderToString(stringBuilder);
-	if (!result)
-	{
-		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
-	}
-	pblStringBuilderFree(stringBuilder);
 
 	/*
 	* check for HTTP error code like HTTP/1.1 500 Server Error
 	*/
-	ptr = strstr(result, "HTTP/");
+	char * ptr = strstr(result, "HTTP/");
 	if (ptr)
 	{
 		ptr = strstr(ptr, " ");
@@ -517,7 +560,7 @@ static int getHitCount(char * area)
 	hitFileName = pblCgiSprintf("%s_%s.txt", area, timeString);
 	hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, hitFileName);
 
-	PBL_CGI_TRACE("Oldest HitFileName %s", hitFilePath);
+	//PBL_CGI_TRACE("Oldest HitFileName %s", hitFilePath);
 
 	int hitCount = 0;
 
@@ -918,8 +961,18 @@ static int dynamicPois(int argc, char * argv[])
 #endif
 
 	char * response = getHttpResponse(hostName, port, uri, 16);
-
 	PBL_CGI_TRACE("Response=%s", response);
+
+	char * start = "{\"hotspots\":";
+	int length = strlen(start);
+
+	if (strncmp(start, response, length))
+	{
+		fputs("Content-Type: application/json\n\n", stdout);
+		fputs(response, stdout);
+		PBL_CGI_TRACE("Response does not start with %s, no duplication", start);
+		return 0;
+	}
 
 	char * latString = pblCgiQueryValue("lat");
 	if (pblCgiStrIsNullOrWhiteSpace(latString))
@@ -955,17 +1008,6 @@ static int dynamicPois(int argc, char * argv[])
 		fputs("Content-Type: application/json\n\n", stdout);
 		fputs(response, stdout);
 		PBL_CGI_TRACE("Not in any area, no duplication");
-		return 0;
-	}
-
-	char * start = "{\"hotspots\":";
-	int length = strlen(start);
-
-	if (strncmp(start, response, length))
-	{
-		fputs("Content-Type: application/json\n\n", stdout);
-		fputs(response, stdout);
-		PBL_CGI_TRACE("Response does not start with %s, no duplication", start);
 		return 0;
 	}
 
