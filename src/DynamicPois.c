@@ -319,6 +319,7 @@ static char * getHttpResponse(char * hostname, int port, char * uri, int timeout
 	PBL_FREE(sendBuffer);
 
 	char * result = receiveStringFromTcp(socketFd, timeoutSeconds);
+	PBL_CGI_TRACE("HttpResponse=%s", result);
 	socket_close(socketFd);
 
 	/*
@@ -520,6 +521,8 @@ static char * getAreaConfigValue(char * area, char *configKey)
 	return valueString;
 }
 
+static char * timeStringFormat = "%02d%02d%02d-%02d%02d%02d";
+
 static int getHitCount(char * area)
 {
 	char * hitDurationString = getAreaConfigValue(area, "HitDuration");
@@ -530,7 +533,7 @@ static int getHitCount(char * area)
 	}
 	//PBL_CGI_TRACE("HitDuration is %d", hitDuration);
 
-	char * timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL), "%02d%02d%02d-%02d%02d%02d");
+	char * timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL), timeStringFormat);
 
 	char * hitDirectory = pblCgiConfigValue("HitDirectory", "/tmp");
 	if (pblCgiStrIsNullOrWhiteSpace(hitDirectory))
@@ -556,7 +559,7 @@ static int getHitCount(char * area)
 	PBL_FREE(hitFilePath);
 	PBL_FREE(timeString);
 
-	timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL) - hitDuration, "%02d%02d%02d-%02d%02d%02d");
+	timeString = pblCgiStrFromTimeAndFormat(time((time_t*)NULL) - hitDuration, timeStringFormat);
 	hitFileName = pblCgiSprintf("%s_%s.txt", area, timeString);
 	hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, hitFileName);
 
