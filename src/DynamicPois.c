@@ -1090,6 +1090,7 @@ static int dynamicPois(int argc, char * argv[])
 	putString("[", stringBuilder);
 
 	int nPois = pblListSize(list);
+	PBL_CGI_TRACE("Number of pois=%d", nPois);
 
 	for (int i = 0; i < duplicator; i++)
 	{
