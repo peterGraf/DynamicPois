@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.11  2018/05/13 15:47:08  peter
+More symmetrical position change
+
 Revision 1.10  2018/05/02 21:56:01  peter
 Improved lat, lon handling after code review
 
@@ -55,7 +58,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.10 2018/05/02 21:56:01 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.11 2018/05/13 15:47:08 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -736,13 +739,17 @@ static char * changeLat(char * string, int i, int difference)
 	switch (modulo)
 	{
 	case 0:
-	case 2:
-	case 3:
 		difference *= factor;
 		break;
 	case 1:
+		difference *= -factor;
+		break;
 	case 4:
 	case 5:
+		difference *= factor;
+		break;
+	case 6:
+	case 7:
 		difference *= -factor;
 		break;
 	default:
@@ -777,34 +784,42 @@ static char * changeLon(char * string, int i, int difference)
 	int factor = 1 + (i - 1) / 8;
 	int modulo = (i - 1) % 8;
 
-	if (modulo >= 2)
+	switch (modulo)
 	{
-		if (modulo % 2)
-		{
-			difference *= factor;
-		}
-		else
-		{
-			difference *= -factor;
-		}
-		char * lon = getNumberString(string, "\"lon\":");
-		//PBL_CGI_TRACE("lon=%s", lon);
-
-		char * oldLon = pblCgiSprintf("\"lon\":%s,", lon);
-		//PBL_CGI_TRACE("oldLon=%s", oldLon);
-
-		char * newLon = pblCgiSprintf("\"lon\":%d,", atoi(lon) + difference);
-		//PBL_CGI_TRACE("newLon=%s", newLon);
-
-		char * replacedLon = pblCgiStrReplace(string, oldLon, newLon);
-
-		PBL_FREE(lon);
-		PBL_FREE(oldLon);
-		PBL_FREE(newLon);
-
-		return replacedLon;
+	case 2:
+		difference *= factor;
+		break;
+	case 3:
+		difference *= -factor;
+		break;
+	case 4:
+	case 6:
+		difference *= factor;
+		break;
+	case 5:
+	case 7:
+		difference *= -factor;
+		break;
+	default:
+		return pblCgiStrDup(string);
 	}
-	return pblCgiStrDup(string);
+
+	char * lon = getNumberString(string, "\"lon\":");
+	//PBL_CGI_TRACE("lon=%s", lon);
+
+	char * oldLon = pblCgiSprintf("\"lon\":%s,", lon);
+	//PBL_CGI_TRACE("oldLon=%s", oldLon);
+
+	char * newLon = pblCgiSprintf("\"lon\":%d,", atoi(lon) + difference);
+	//PBL_CGI_TRACE("newLon=%s", newLon);
+
+	char * replacedLon = pblCgiStrReplace(string, oldLon, newLon);
+
+	PBL_FREE(lon);
+	PBL_FREE(oldLon);
+	PBL_FREE(newLon);
+
+	return replacedLon;
 }
 
 static PblList * relativeAltList = NULL;
