@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.12  2018/05/13 19:29:09  peter
+Added cookie handling
+
 Revision 1.11  2018/05/13 15:47:08  peter
 More symmetrical position change
 
@@ -58,7 +61,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.11 2018/05/13 15:47:08 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.12 2018/05/13 19:29:09 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -321,50 +324,11 @@ static char * getHttpResponse(char * hostname, int port, char * uri, int timeout
 	sendBytesToTcp(socketFd, sendBuffer, strlen(sendBuffer));
 	PBL_FREE(sendBuffer);
 
-	char * result = receiveStringFromTcp(socketFd, timeoutSeconds);
-	PBL_CGI_TRACE("HttpResponse=%s", result);
+	char * response = receiveStringFromTcp(socketFd, timeoutSeconds);
+	PBL_CGI_TRACE("HttpResponse=%s", response);
 	socket_close(socketFd);
 
-	/*
-	* check for HTTP error code like HTTP/1.1 500 Server Error
-	*/
-	char * ptr = strstr(result, "HTTP/");
-	if (ptr)
-	{
-		ptr = strstr(ptr, " ");
-		if (ptr)
-		{
-			ptr++;
-			if (strncmp(ptr, "200", 3))
-			{
-				pblCgiExitOnError("%s: Bad HTTP response\n%s\n", tag, result);
-			}
-		}
-	}
-
-	if (!ptr)
-	{
-		pblCgiExitOnError("%s: Expecting HTTP response\n%s\n", tag, result);
-	}
-
-	ptr = strstr(ptr, "\r\n\r\n");
-	if (!ptr)
-	{
-		ptr = strstr(result, "\n\n");
-		if (!ptr)
-		{
-			pblCgiExitOnError("%s: Illegal HTTP response, no separator.\n%s\n", tag, result);
-		}
-		else
-		{
-			ptr += 2;
-		}
-	}
-	else
-	{
-		ptr += 4;
-	}
-	return ptr;
+	return response;
 }
 
 static char * getMatchingString(char * string, char start, char end, char **nextPtr)
@@ -981,12 +945,57 @@ static int dynamicPois(int argc, char * argv[])
 	char * response = getHttpResponse(hostName, port, uri, 16);
 	PBL_CGI_TRACE("Response=%s", response);
 
+	char * cookie = getStringBetween(response, "Set-Cookie: ", "\r\n");
+
+	/*
+	* check for HTTP error code like HTTP/1.1 500 Server Error
+	*/
+	char * ptr = strstr(response, "HTTP/");
+	if (ptr)
+	{
+		ptr = strstr(ptr, " ");
+		if (ptr)
+		{
+			ptr++;
+			if (strncmp(ptr, "200", 3))
+			{
+				pblCgiExitOnError("%s: Bad HTTP response\n%s\n", tag, result);
+			}
+		}
+	}
+
+	if (!ptr)
+	{
+		pblCgiExitOnError("%s: Expecting HTTP response\n%s\n", tag, result);
+	}
+
+	ptr = strstr(ptr, "\r\n\r\n");
+	if (!ptr)
+	{
+		ptr = strstr(ptr, "\n\n");
+		if (!ptr)
+		{
+			pblCgiExitOnError("%s: Illegal HTTP response, no separator.\n%s\n", tag, result);
+		}
+		else
+		{
+			ptr += 2;
+		}
+	}
+	else
+	{
+		ptr += 4;
+	}
+	response = ptr;
+
 	char * start = "{\"hotspots\":";
 	int length = strlen(start);
 
 	if (strncmp(start, response, length))
 	{
-		fputs("Content-Type: application/json\n\n", stdout);
+		fputs("Content-Type: application/json\r\nSet-Cookie: ", stdout);
+		fputs(cookie, stdout);
+		fputs("\r\n\r\n", stdout);
 		fputs(response, stdout);
 		PBL_CGI_TRACE("Response does not start with %s, no duplication", start);
 		return 0;
@@ -1023,7 +1032,9 @@ static int dynamicPois(int argc, char * argv[])
 	char * area = getArea(latInt, lonInt);
 	if (area == NULL)
 	{
-		fputs("Content-Type: application/json\n\n", stdout);
+		fputs("Content-Type: application/json\r\nSet-Cookie: ", stdout);
+		fputs(cookie, stdout);
+		fputs("\r\n\r\n", stdout);
 		fputs(response, stdout);
 		PBL_CGI_TRACE("Not in any area, no duplication");
 		return 0;
@@ -1034,7 +1045,9 @@ static int dynamicPois(int argc, char * argv[])
 	{
 		PBL_CGI_TRACE("Hits 0, no duplication");
 
-		fputs("Content-Type: application/json\n\n", stdout);
+		fputs("Content-Type: application/json\r\nSet-Cookie: ", stdout);
+		fputs(cookie, stdout);
+		fputs("\r\n\r\n", stdout);
 		fputs(response, stdout);
 		return 0;
 	}
@@ -1044,7 +1057,9 @@ static int dynamicPois(int argc, char * argv[])
 	{
 		PBL_CGI_TRACE("Hits %d, Duplicator %d, no duplication", numberOfHits, duplicator);
 
-		fputs("Content-Type: application/json\n\n", stdout);
+		fputs("Content-Type: application/json\r\nSet-Cookie: ", stdout);
+		fputs(cookie, stdout);
+		fputs("\r\n\r\n", stdout);
 		fputs(response, stdout);
 		return 0;
 	}
@@ -1068,7 +1083,7 @@ static int dynamicPois(int argc, char * argv[])
 		pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
 	}
 
-	char * ptr = hotspotsString;
+	ptr = hotspotsString;
 	while (*ptr == '{')
 	{
 		char * ptr2 = NULL;
@@ -1085,7 +1100,9 @@ static int dynamicPois(int argc, char * argv[])
 		ptr = ptr2 + 1;
 	}
 
-	putString("Content-Type: application/json\n\n", stringBuilder);
+	fputs("Content-Type: application/json\r\nSet-Cookie: ", stdout);
+	fputs(cookie, stdout);
+	fputs("\r\n\r\n", stdout);
 	putString(start, stringBuilder);
 	putString("[", stringBuilder);
 
