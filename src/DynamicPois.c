@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.14  2018/05/25 20:12:44  peter
+Fixed a linux compilation error
+
 Revision 1.13  2018/05/25 20:03:08  peter
 Produce a hit only if action=refresh
 
@@ -64,7 +67,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.13 2018/05/25 20:03:08 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.14 2018/05/25 20:12:44 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -968,14 +971,14 @@ static int dynamicPois(int argc, char * argv[])
 			ptr++;
 			if (strncmp(ptr, "200", 3))
 			{
-				pblCgiExitOnError("%s: Bad HTTP response\n%s\n", tag, result);
+				pblCgiExitOnError("%s: Bad HTTP response\n%s\n", tag, response);
 			}
 		}
 	}
 
 	if (!ptr)
 	{
-		pblCgiExitOnError("%s: Expecting HTTP response\n%s\n", tag, result);
+		pblCgiExitOnError("%s: Expecting HTTP response\n%s\n", tag, response);
 	}
 
 	ptr = strstr(ptr, "\r\n\r\n");
@@ -984,7 +987,7 @@ static int dynamicPois(int argc, char * argv[])
 		ptr = strstr(ptr, "\n\n");
 		if (!ptr)
 		{
-			pblCgiExitOnError("%s: Illegal HTTP response, no separator.\n%s\n", tag, result);
+			pblCgiExitOnError("%s: Illegal HTTP response, no separator.\n%s\n", tag, response);
 		}
 		else
 		{
