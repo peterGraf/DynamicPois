@@ -23,7 +23,13 @@ HitDuplicators          1, 2, 3, 4, 5, 6, 12
 #
 # e.g. Area_1           48000000,11000000,49000000,15000000
 #
-Area_1                  48000000,11000000,49000000,12000000
+# Area_1 Munich
+# 
+Area_1                  47759692,10995449,48586707,12267802
+#
+# Area_2 Montreal
+#
+Area_2                 45386538,-74003593,45743231,-73386298
 
 # HitDuration, number of seconds that hits are counted for
 #

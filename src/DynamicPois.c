@@ -20,6 +20,9 @@ For more information on Tamiko Thiel or Peter Graf,
 please see: http://www.mission-base.com/.
 
 $Log: DynamicPois.c,v $
+Revision 1.13  2018/05/25 20:03:08  peter
+Produce a hit only if action=refresh
+
 Revision 1.12  2018/05/13 19:29:09  peter
 Added cookie handling
 
@@ -61,7 +64,7 @@ More work on service
 /*
 * Make sure "strings <exe> | grep Id | sort -u" shows the source file versions
 */
-char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.12 2018/05/13 19:29:09 peter Exp $";
+char * DynamicPois_c_id = "$Id: DynamicPois.c,v 1.13 2018/05/25 20:03:08 peter Exp $";
 
 #include <stdio.h>
 #include <memory.h>
@@ -514,13 +517,19 @@ static int getHitCount(char * area)
 	char * hitFilePath = pblCgiSprintf("%s/%s", hitDirectory, hitFileName);
 	PBL_CGI_TRACE("HitFilePath %s", hitFilePath);
 
-	FILE * hitFile = pblCgiFopen(hitFilePath, "a+");
-	if (hitFile == NULL)
+	// produce a hit only if action=refresh
+	//
+	char * action = pblCgiQueryValue("action");
+	if (pblCgiStrEquals("refresh", action))
 	{
-		PBL_CGI_TRACE("Failed to open hitFile %s", hitFilePath);
-		return 0;
+		FILE * hitFile = pblCgiFopen(hitFilePath, "a+");
+		if (hitFile == NULL)
+		{
+			PBL_CGI_TRACE("Failed to open hitFile %s", hitFilePath);
+			return 0;
+		}
+		fclose(hitFile);
 	}
-	fclose(hitFile);
 
 	PBL_FREE(hitFileName);
 	PBL_FREE(hitFilePath);
