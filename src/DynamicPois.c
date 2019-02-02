@@ -216,7 +216,7 @@ static char * receiveStringFromTcp(int socket, int timeoutSeconds)
 
 		if (stringBuilder == NULL)
 		{
-			PblStringBuilder * stringBuilder = pblStringBuilderNew();
+			stringBuilder = pblStringBuilderNew();
 			if (!stringBuilder)
 			{
 				pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
@@ -235,7 +235,7 @@ static char * receiveStringFromTcp(int socket, int timeoutSeconds)
 			pblCgiExitOnError("%s: socket %d received 0 bytes as response\n", tag, socket);
 		}
 
-		char * result = pblStringBuilderToString(stringBuilder);
+		result = pblStringBuilderToString(stringBuilder);
 		if (!result)
 		{
 			pblCgiExitOnError("%s: pbl_errno = %d, message='%s'\n", tag, pbl_errno, pbl_errstr);
